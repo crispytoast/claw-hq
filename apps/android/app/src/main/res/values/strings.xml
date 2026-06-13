@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Claw HQ</string>
+    <string name="setup_title">Welcome to Claw HQ</string>
+    <string name="setup_subtitle">Enter the URL of your Claw HQ relay.</string>
+    <string name="setup_hint">e.g. http://100.88.29.65:3838</string>
+    <string name="setup_continue">Continue</string>
+    <string name="setup_change_relay">Change relay URL</string>
+    <string name="error_relay_unreachable">Cannot reach that URL. Check the address and Wi-Fi/Tailnet.</string>
+    <string name="notif_channel_default_name">Claw HQ</string>
+    <string name="notif_channel_default_desc">Agent runs, approval prompts, and other Claw HQ events.</string>
+</resources>

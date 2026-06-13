@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Claw HQ palette: flat charcoal + neon cyan + maroon accent. -->
+    <color name="charcoal">#1B1B1B</color>
+    <color name="neon_cyan">#5FD1F0</color>
+    <color name="neon_maroon">#B83C5C</color>
+    <color name="text_primary">#F2F2F2</color>
+    <color name="text_dim">#9BA3AB</color>
+</resources>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Self-hosted relays often run on Tailnet / LAN over plain HTTP. The user
+  enters the relay URL on first launch, so we can't pin a domain here.
+  Allow cleartext for everything; the user's choice of network shape is
+  the security boundary (Tailnet is private; trusted-lan auth mode is for
+  trusted networks only).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
