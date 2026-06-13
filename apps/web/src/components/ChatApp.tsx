@@ -3,10 +3,9 @@ import { api, type User } from "../api.js";
 import { GatewayClient, defaultGatewayUrl, type ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { ChatPane } from "./ChatPane.js";
-import { SessionList } from "./SessionList.js";
 import { Settings } from "./Settings.js";
 import { NotificationsInbox } from "./NotificationsInbox.js";
-import { NavRail } from "./NavRail.js";
+import { Sidebar, type SidebarPage } from "./Sidebar.js";
 import { systemApi } from "../system-api.js";
 import { ChannelsPage } from "./pages/ChannelsPage.js";
 import { McpsPage } from "./pages/McpsPage.js";
@@ -17,7 +16,7 @@ import { DoctorPage } from "./pages/DoctorPage.js";
 import { RpcConsolePage } from "./pages/RpcConsolePage.js";
 import { SessionsPage } from "./pages/SessionsPage.js";
 
-type PageKey = "chat" | "sessions" | "channels" | "mcps" | "skills" | "models" | "approvals" | "doctor" | "rpc";
+type PageKey = SidebarPage;
 
 interface Props {
   user: User;
@@ -37,8 +36,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [status, setStatus] = useState<ConnectionStatus>({ kind: "connecting" });
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
-  const [showSidebar, setShowSidebar] = useState(true);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -109,19 +107,25 @@ export function ChatApp({ user, onLogout }: Props) {
     })();
   }, [status.kind]);
 
-  // Mobile UX: when picking a session, hide the sidebar.
+  // Picking a session always lands on the chat page; the sidebar handles
+  // the mobile-close so we don't need to mirror that state here.
   const handlePickSession = useCallback((key: string) => {
     setActiveKey(key);
-    if (window.matchMedia("(max-width: 720px)").matches) setShowSidebar(false);
+    setPage("chat");
   }, []);
 
-  // Close menu on outside click.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handler = () => setMenuOpen(false);
-    window.addEventListener("click", handler);
-    return () => window.removeEventListener("click", handler);
-  }, [menuOpen]);
+  const handleSelectPage = useCallback((next: SidebarPage) => {
+    if (next === "settings") { setShowSettings(true); return; }
+    setPage(next);
+  }, []);
+
+  const handleShowPairedDevices = useCallback(async () => {
+    const tokens = await api.listPairingTokens();
+    const lines = tokens
+      .map((t) => `• ${t.label} — last used ${t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}`)
+      .join("\n");
+    alert(`Paired devices:\n${lines || "(none)"}`);
+  }, []);
 
   // Poll unread count every 20s so the bell badge stays roughly fresh.
   // (Push triggers already fan out via FCM; this is for the web fallback path.)
@@ -186,94 +190,70 @@ export function ChatApp({ user, onLogout }: Props) {
     </>
   );
 
+  const activeSession = sessions.find((s) => s.sessionKey === activeKey);
+
   return (
-    <div className="app-shell">
-      <NavRail active={page} onSelect={(id) => setPage(id as PageKey)} />
-      {page === "chat" ? (
-        <div className={`chat-shell ${showSidebar ? "show-sidebar" : ""}`}>
-          <aside className="chat-sidebar">
-            <div className="sidebar-header" style={{ position: "relative" }}>
-              <div className="title">
-                <span className="brand-dot" />
-                Claw HQ
-              </div>
-              <button
-                className="menu"
-                aria-label="menu"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen((v) => !v);
-                }}
-              >⋯</button>
-              {menuOpen && (
-                <div className="menu-popover">
-                  <button onClick={() => { setMenuOpen(false); setShowSettings(true); }}>Settings</button>
-                  <div className="sep" />
-                  <button onClick={async () => {
-                    const tokens = await api.listPairingTokens();
-                    alert(`Paired devices:\n${tokens.map((t) => `• ${t.label} — last used ${t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}`).join("\n") || "(none)"}`);
-                  }}>Paired devices</button>
-                  <div className="sep" />
-                  <button onClick={onLogout}>Log out ({user.displayName})</button>
-                </div>
-              )}
-            </div>
+    <div className="cl-app-shell">
+      <Sidebar
+        user={user}
+        page={page}
+        onSelectPage={handleSelectPage}
+        sessions={sessions}
+        activeSessionKey={activeKey}
+        onPickSession={handlePickSession}
+        mobileOpen={mobileOpen}
+        onMobileClose={() => setMobileOpen(false)}
+        onLogout={onLogout}
+        onShowPairedDevices={handleShowPairedDevices}
+        footerRight={
+          <span className={`status-pill ${pill.cls}`}>
+            <span className="status-dot" />
+            {pill.label}
+          </span>
+        }
+      />
 
-            <SessionList
-              sessions={sessions}
-              activeKey={activeKey}
-              onPick={handlePickSession}
-            />
-
-            <div className="sidebar-footer">
-              <span>{user.displayName}</span>
-              <span className={`status-pill ${pill.cls}`}>
-                <span className="status-dot" />
-                {pill.label}
-              </span>
-            </div>
-          </aside>
-
-          <main className="chat-main">
-            <div className="chat-header">
-              <button className="back-btn" onClick={() => setShowSidebar(true)}>‹ Back</button>
-              <div className="title">
-                {sessions.find((s) => s.sessionKey === activeKey)?.label ?? "No session"}
-              </div>
-              {toolbar}
-            </div>
-
-            {clientRef.current && activeKey ? (
-              <ChatPane
-                key={activeKey}
-                client={clientRef.current}
-                sessionKey={activeKey}
-                status={status}
-              />
-            ) : (
-              <div className="empty"><div className="big">⏳</div>Waiting for session…</div>
-            )}
-          </main>
+      <main className="cl-main">
+        <div className="page-toolbar" style={{ justifyContent: "space-between" }}>
+          <button
+            type="button"
+            className="cl-hamburger"
+            aria-label="Open menu"
+            onClick={() => setMobileOpen(true)}
+          >☰</button>
+          <div style={{ flex: 1, minWidth: 0, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {page === "chat" ? (activeSession?.label ?? "No session") : null}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>{toolbar}</div>
         </div>
-      ) : (
-        <main className="page-main">
-          <div className="page-toolbar">{toolbar}</div>
-          {page === "sessions" && (
-            <SessionsPage
+
+        {page === "chat" && (
+          clientRef.current && activeKey ? (
+            <ChatPane
+              key={activeKey}
               client={clientRef.current}
+              sessionKey={activeKey}
               status={status}
-              onOpenSession={(k) => { setActiveKey(k); setPage("chat"); }}
             />
-          )}
-          {page === "channels" && <ChannelsPage client={clientRef.current} status={status} />}
-          {page === "mcps" && <McpsPage client={clientRef.current} status={status} />}
-          {page === "skills" && <SkillsPage client={clientRef.current} status={status} />}
-          {page === "models" && <ModelsPage client={clientRef.current} status={status} />}
-          {page === "approvals" && <ApprovalsPage client={clientRef.current} status={status} />}
-          {page === "doctor" && <DoctorPage client={clientRef.current} status={status} />}
-          {page === "rpc" && <RpcConsolePage client={clientRef.current} status={status} />}
-        </main>
-      )}
+          ) : (
+            <div className="empty"><div className="big">⏳</div>Waiting for session…</div>
+          )
+        )}
+        {page === "sessions" && (
+          <SessionsPage
+            client={clientRef.current}
+            status={status}
+            onOpenSession={(k) => { setActiveKey(k); setPage("chat"); }}
+          />
+        )}
+        {page === "channels" && <ChannelsPage client={clientRef.current} status={status} />}
+        {page === "mcps" && <McpsPage client={clientRef.current} status={status} />}
+        {page === "skills" && <SkillsPage client={clientRef.current} status={status} />}
+        {page === "models" && <ModelsPage client={clientRef.current} status={status} />}
+        {page === "approvals" && <ApprovalsPage client={clientRef.current} status={status} />}
+        {page === "doctor" && <DoctorPage client={clientRef.current} status={status} />}
+        {page === "rpc" && <RpcConsolePage client={clientRef.current} status={status} />}
+      </main>
     </div>
   );
 }

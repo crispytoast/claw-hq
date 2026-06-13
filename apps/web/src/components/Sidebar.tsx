@@ -1,0 +1,291 @@
+import { useEffect, useMemo, useState } from "react";
+import type { SessionSummary } from "./ChatApp.js";
+import type { User } from "../api.js";
+
+export type SidebarPage =
+  | "chat"
+  | "sessions"
+  | "channels"
+  | "mcps"
+  | "skills"
+  | "models"
+  | "approvals"
+  | "doctor"
+  | "rpc"
+  | "settings";
+
+interface NavItem {
+  id: Exclude<SidebarPage, "chat">;
+  label: string;
+  icon: string;
+  dot?: "amber" | "green";
+}
+
+// Order mirrors OHQ's static nav: live surfaces first, ops/debug last,
+// Settings always at the bottom. "Sessions" lives in the expandable group above.
+const STATIC_NAV: NavItem[] = [
+  { id: "channels",  label: "Channels",  icon: "📡" },
+  { id: "mcps",      label: "MCPs",      icon: "🛠️" },
+  { id: "skills",    label: "Skills",    icon: "🧠" },
+  { id: "models",    label: "Models",    icon: "🧮" },
+  { id: "approvals", label: "Approvals", icon: "✋" },
+  { id: "doctor",    label: "Doctor",    icon: "🩺" },
+  { id: "rpc",       label: "RPC",       icon: "🔌" },
+  { id: "settings",  label: "Settings",  icon: "⚙️" },
+];
+
+interface Props {
+  user: User;
+  page: SidebarPage;
+  onSelectPage(page: SidebarPage): void;
+  sessions: SessionSummary[];
+  activeSessionKey: string | null;
+  onPickSession(key: string): void;
+  mobileOpen: boolean;
+  onMobileClose(): void;
+  onLogout(): void | Promise<void>;
+  onShowPairedDevices?(): void | Promise<void>;
+  footerRight?: React.ReactNode;
+}
+
+export function Sidebar({
+  user,
+  page,
+  onSelectPage,
+  sessions,
+  activeSessionKey,
+  onPickSession,
+  mobileOpen,
+  onMobileClose,
+  onLogout,
+  onShowPairedDevices,
+  footerRight,
+}: Props) {
+  // OHQ pattern: the group that matches the current page starts expanded.
+  const [sessionsOpen, setSessionsOpen] = useState(page === "chat" || page === "sessions");
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [filter, setFilter] = useState<"all" | string>("all");
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (page === "chat" || page === "sessions") setSessionsOpen(true);
+  }, [page]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocClick = () => setMenuOpen(false);
+    window.addEventListener("click", onDocClick);
+    return () => window.removeEventListener("click", onDocClick);
+  }, [menuOpen]);
+
+  // Filter is by agent id parsed from the sessionKey (agent:<id>:<tail>). For
+  // Phase A this is purely informational — we surface the same set of chips
+  // OHQ shows for projects.
+  const agentIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of sessions) {
+      if (s.agentId) { set.add(s.agentId); continue; }
+      const parts = s.sessionKey.split(":");
+      if (parts[0] === "agent" && parts[1]) set.add(parts[1]);
+    }
+    return [...set].sort();
+  }, [sessions]);
+
+  const filteredSessions = useMemo(() => {
+    if (filter === "all") return sessions;
+    return sessions.filter((s) => {
+      const id = s.agentId ?? s.sessionKey.split(":")[1];
+      return id === filter;
+    });
+  }, [sessions, filter]);
+
+  function pick(p: SidebarPage) {
+    onSelectPage(p);
+    onMobileClose();
+  }
+
+  return (
+    <>
+      <aside className={`cl-sidebar ${mobileOpen ? "cl-open" : ""}`}>
+        <div className="cl-sidebar-header" style={{ position: "relative" }}>
+          <span className="brand-dot" />
+          <span className="cl-sidebar-brand">Claw HQ</span>
+          <button
+            type="button"
+            className="menu"
+            aria-label="More"
+            style={{ marginLeft: "auto", color: "var(--muted-foreground)", padding: "2px 8px", fontSize: "1.1rem" }}
+            onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+          >⋯</button>
+          {menuOpen && (
+            <div className="menu-popover" style={{ top: 48, right: 12, left: "auto" }}>
+              {onShowPairedDevices && (
+                <button onClick={() => { setMenuOpen(false); void onShowPairedDevices(); }}>
+                  Paired devices
+                </button>
+              )}
+              {onShowPairedDevices && <div className="sep" />}
+              <button onClick={() => { setMenuOpen(false); void onLogout(); }}>
+                Log out ({user.displayName})
+              </button>
+            </div>
+          )}
+        </div>
+
+        <nav className="cl-sidebar-nav" aria-label="primary">
+          {/* Sessions — expandable. Mirrors OHQ's Chat group. */}
+          <div className="cl-sidebar-group">
+            <button
+              type="button"
+              className={`cl-group-header ${page === "chat" || page === "sessions" ? "cl-active" : ""}`}
+              onClick={() => setSessionsOpen((v) => !v)}
+              aria-expanded={sessionsOpen}
+            >
+              <span className="cl-group-icon">💬</span>
+              <span>Sessions</span>
+              <span className="cl-group-chevron">{sessionsOpen ? "▾" : "▸"}</span>
+            </button>
+
+            <div className={`cl-group-body ${sessionsOpen ? "cl-expanded" : ""}`}>
+              <div className="cl-group-inner">
+                <button
+                  type="button"
+                  className="cl-new-btn"
+                  onClick={() => pick("sessions")}
+                  title="Browse all sessions"
+                >
+                  <span>＋</span>
+                  <span>All sessions</span>
+                </button>
+
+                {agentIds.length > 1 && (
+                  <div className="cl-filter-chips">
+                    <button
+                      type="button"
+                      className={`cl-filter-chip ${filter === "all" ? "cl-active" : ""}`}
+                      onClick={() => setFilter("all")}
+                    >
+                      All
+                    </button>
+                    {agentIds.map((id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className={`cl-filter-chip ${filter === id ? "cl-active" : ""}`}
+                        onClick={() => setFilter(id)}
+                      >
+                        {id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {filteredSessions.length > 0 && (
+                  <div className="cl-section-label">Recent</div>
+                )}
+
+                <div className="cl-list">
+                  {filteredSessions.length === 0 ? (
+                    <div className="cl-list-empty">
+                      {sessions.length === 0 ? "No sessions yet." : "No sessions match this filter."}
+                    </div>
+                  ) : (
+                    filteredSessions.map((s) => {
+                      const isActive = page === "chat" && s.sessionKey === activeSessionKey;
+                      const agent = s.agentId ?? s.sessionKey.split(":")[1] ?? null;
+                      return (
+                        <button
+                          key={s.sessionKey}
+                          type="button"
+                          className={`cl-row ${isActive ? "cl-active" : ""}`}
+                          onClick={() => {
+                            onPickSession(s.sessionKey);
+                            onMobileClose();
+                          }}
+                        >
+                          <div className="cl-row-main">
+                            <span className="cl-row-title">{s.label}</span>
+                          </div>
+                          <div className="cl-row-meta">
+                            {agent && (
+                              <>
+                                <span className="cl-row-tag">{agent}</span>
+                                <span>·</span>
+                              </>
+                            )}
+                            <span>{s.lastActivityMs ? relativeTime(s.lastActivityMs) : "—"}</span>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Projects — placeholder for Phase C (workspace cards). */}
+          <div className="cl-sidebar-group">
+            <button
+              type="button"
+              className="cl-group-header"
+              onClick={() => setProjectsOpen((v) => !v)}
+              aria-expanded={projectsOpen}
+            >
+              <span className="cl-group-icon">📁</span>
+              <span>Projects</span>
+              <span className="cl-group-chevron">{projectsOpen ? "▾" : "▸"}</span>
+            </button>
+            <div className={`cl-group-body ${projectsOpen ? "cl-expanded" : ""}`}>
+              <div className="cl-group-inner">
+                <div className="cl-list-empty">No projects yet.</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Static nav. */}
+          <div className="cl-static-nav">
+            {STATIC_NAV.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`cl-nav-item ${page === item.id ? "cl-active" : ""}`}
+                onClick={() => pick(item.id)}
+              >
+                <span className="cl-nav-icon">{item.icon}</span>
+                <span>{item.label}</span>
+                {item.dot && <span className={`cl-nav-dot cl-${item.dot}`} />}
+              </button>
+            ))}
+          </div>
+        </nav>
+
+        <div className="cl-sidebar-footer">
+          <span className="cl-footer-user" title={user.displayName}>{user.displayName}</span>
+          {footerRight}
+        </div>
+      </aside>
+      {mobileOpen && (
+        <button
+          type="button"
+          className="cl-sidebar-scrim"
+          aria-label="Close sidebar"
+          onClick={onMobileClose}
+        />
+      )}
+    </>
+  );
+}
+
+function relativeTime(ms: number): string {
+  const diff = Date.now() - ms;
+  const sec = Math.max(0, Math.floor(diff / 1000));
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const d = Math.floor(hr / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(ms).toLocaleDateString();
+}
