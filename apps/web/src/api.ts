@@ -50,6 +50,9 @@ export const api = {
     const { user } = await call<{ user: User }>("/api/auth/me");
     return user;
   },
+  async meExtended(): Promise<{ user: User; mode: string; runTunnel: boolean }> {
+    return await call<{ user: User; mode: string; runTunnel: boolean }>("/api/auth/me");
+  },
   async login(email: string, password: string): Promise<User> {
     const { user } = await call<{ user: User }>("/api/auth/login", {
       method: "POST",

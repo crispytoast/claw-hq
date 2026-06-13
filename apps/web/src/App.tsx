@@ -16,7 +16,14 @@ export function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const user = await api.me();
+        const { user, runTunnel } = await api.meExtended();
+        // Single-host deployments (relay + tunnel in one process) never need
+        // manual pairing. Only show Setup when the tunnel is remote AND no
+        // pairing token has been issued yet.
+        if (runTunnel) {
+          setState({ kind: "ready", user });
+          return;
+        }
         const tokens = await api.listPairingTokens();
         if (tokens.length === 0) setState({ kind: "needs-setup", user });
         else setState({ kind: "ready", user });
@@ -38,6 +45,13 @@ export function App() {
     return (
       <Login
         onAuthenticated={async (user) => {
+          try {
+            const { runTunnel } = await api.meExtended();
+            if (runTunnel) {
+              setState({ kind: "ready", user });
+              return;
+            }
+          } catch { /* fall through to legacy gate */ }
           const tokens = await api.listPairingTokens();
           if (tokens.length === 0) setState({ kind: "needs-setup", user });
           else setState({ kind: "ready", user });

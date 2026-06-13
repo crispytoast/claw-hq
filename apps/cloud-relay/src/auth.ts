@@ -78,13 +78,20 @@ export async function registerAuthRoutes(fastify: FastifyInstance, deps: AuthDep
 
   // ---------------- /api/auth/me ----------------
   // Always available. In trusted-lan mode always returns the owner.
+  // runTunnel tells the UI whether the relay also runs the tunnel in-process
+  // (single-host default — no manual pairing needed). Split-process
+  // deployments set this to false so the UI prompts for a pairing command.
   fastify.get("/api/auth/me", async (req, reply) => {
     const owner = resolveOwner(req, config, db);
     if (!owner) {
       reply.code(401);
       return { error: "not authenticated", mode: config.auth.mode };
     }
-    return { user: { id: owner.id, displayName: owner.displayName }, mode: config.auth.mode };
+    return {
+      user: { id: owner.id, displayName: owner.displayName },
+      mode: config.auth.mode,
+      runTunnel: config.run.tunnel === true,
+    };
   });
 
   fastify.post("/api/auth/logout", async (_req, reply) => {
