@@ -6,7 +6,18 @@ import { ChatPane } from "./ChatPane.js";
 import { SessionList } from "./SessionList.js";
 import { Settings } from "./Settings.js";
 import { NotificationsInbox } from "./NotificationsInbox.js";
+import { NavRail } from "./NavRail.js";
 import { systemApi } from "../system-api.js";
+import { ChannelsPage } from "./pages/ChannelsPage.js";
+import { McpsPage } from "./pages/McpsPage.js";
+import { SkillsPage } from "./pages/SkillsPage.js";
+import { ModelsPage } from "./pages/ModelsPage.js";
+import { ApprovalsPage } from "./pages/ApprovalsPage.js";
+import { DoctorPage } from "./pages/DoctorPage.js";
+import { RpcConsolePage } from "./pages/RpcConsolePage.js";
+import { SessionsPage } from "./pages/SessionsPage.js";
+
+type PageKey = "chat" | "sessions" | "channels" | "mcps" | "skills" | "models" | "approvals" | "doctor" | "rpc";
 
 interface Props {
   user: User;
@@ -31,6 +42,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [page, setPage] = useState<PageKey>("chat");
 
   useEffect(() => {
     const c = new GatewayClient(defaultGatewayUrl());
@@ -154,85 +166,114 @@ export function ChatApp({ user, onLogout }: Props) {
     );
   }
 
-  return (
-    <div className={`chat-shell ${showSidebar ? "show-sidebar" : ""}`}>
-      <aside className="chat-sidebar">
-        <div className="sidebar-header" style={{ position: "relative" }}>
-          <div className="title">
-            <span className="brand-dot" />
-            Claw HQ
-          </div>
-          <button
-            className="menu"
-            aria-label="menu"
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuOpen((v) => !v);
-            }}
-          >⋯</button>
-          {menuOpen && (
-            <div className="menu-popover">
-              <button onClick={() => { setMenuOpen(false); setShowSettings(true); }}>Settings</button>
-              <div className="sep" />
-              <button onClick={async () => {
-                const tokens = await api.listPairingTokens();
-                alert(`Paired devices:\n${tokens.map((t) => `• ${t.label} — last used ${t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}`).join("\n") || "(none)"}`);
-              }}>Paired devices</button>
-              <div className="sep" />
-              <button onClick={onLogout}>Log out ({user.displayName})</button>
-            </div>
-          )}
-        </div>
-
-        <SessionList
-          sessions={sessions}
-          activeKey={activeKey}
-          onPick={handlePickSession}
-        />
-
-        <div className="sidebar-footer">
-          <span>{user.displayName}</span>
-          <span className={`status-pill ${pill.cls}`}>
-            <span className="status-dot" />
-            {pill.label}
-          </span>
-        </div>
-      </aside>
-
-      <main className="chat-main">
-        <div className="chat-header">
-          <button className="back-btn" onClick={() => setShowSidebar(true)}>‹ Back</button>
-          <div className="title">
-            {sessions.find((s) => s.sessionKey === activeKey)?.label ?? "No session"}
-          </div>
-          <button
-            className="bell-btn"
-            aria-label="notifications"
-            onClick={() => setShowInbox(true)}
-            title={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"}
-          >
-            🔔
-            {unreadCount > 0 && (
-              <span className="bell-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>
-            )}
-          </button>
-          <span className={`status-pill ${pill.cls}`}>
-            <span className="status-dot" />
-            {pill.label}
-          </span>
-        </div>
-
-        {clientRef.current && activeKey ? (
-          <ChatPane
-            key={activeKey}
-            client={clientRef.current}
-            sessionKey={activeKey}
-            status={status}
-          />
-        ) : (
-          <div className="empty"><div className="big">⏳</div>Waiting for session…</div>
+  const toolbar = (
+    <>
+      <button
+        className="bell-btn"
+        aria-label="notifications"
+        onClick={() => setShowInbox(true)}
+        title={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"}
+      >
+        🔔
+        {unreadCount > 0 && (
+          <span className="bell-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>
         )}
-      </main>
+      </button>
+      <span className={`status-pill ${pill.cls}`}>
+        <span className="status-dot" />
+        {pill.label}
+      </span>
+    </>
+  );
+
+  return (
+    <div className="app-shell">
+      <NavRail active={page} onSelect={(id) => setPage(id as PageKey)} />
+      {page === "chat" ? (
+        <div className={`chat-shell ${showSidebar ? "show-sidebar" : ""}`}>
+          <aside className="chat-sidebar">
+            <div className="sidebar-header" style={{ position: "relative" }}>
+              <div className="title">
+                <span className="brand-dot" />
+                Claw HQ
+              </div>
+              <button
+                className="menu"
+                aria-label="menu"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen((v) => !v);
+                }}
+              >⋯</button>
+              {menuOpen && (
+                <div className="menu-popover">
+                  <button onClick={() => { setMenuOpen(false); setShowSettings(true); }}>Settings</button>
+                  <div className="sep" />
+                  <button onClick={async () => {
+                    const tokens = await api.listPairingTokens();
+                    alert(`Paired devices:\n${tokens.map((t) => `• ${t.label} — last used ${t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}`).join("\n") || "(none)"}`);
+                  }}>Paired devices</button>
+                  <div className="sep" />
+                  <button onClick={onLogout}>Log out ({user.displayName})</button>
+                </div>
+              )}
+            </div>
+
+            <SessionList
+              sessions={sessions}
+              activeKey={activeKey}
+              onPick={handlePickSession}
+            />
+
+            <div className="sidebar-footer">
+              <span>{user.displayName}</span>
+              <span className={`status-pill ${pill.cls}`}>
+                <span className="status-dot" />
+                {pill.label}
+              </span>
+            </div>
+          </aside>
+
+          <main className="chat-main">
+            <div className="chat-header">
+              <button className="back-btn" onClick={() => setShowSidebar(true)}>‹ Back</button>
+              <div className="title">
+                {sessions.find((s) => s.sessionKey === activeKey)?.label ?? "No session"}
+              </div>
+              {toolbar}
+            </div>
+
+            {clientRef.current && activeKey ? (
+              <ChatPane
+                key={activeKey}
+                client={clientRef.current}
+                sessionKey={activeKey}
+                status={status}
+              />
+            ) : (
+              <div className="empty"><div className="big">⏳</div>Waiting for session…</div>
+            )}
+          </main>
+        </div>
+      ) : (
+        <main className="page-main">
+          <div className="page-toolbar">{toolbar}</div>
+          {page === "sessions" && (
+            <SessionsPage
+              client={clientRef.current}
+              status={status}
+              onOpenSession={(k) => { setActiveKey(k); setPage("chat"); }}
+            />
+          )}
+          {page === "channels" && <ChannelsPage client={clientRef.current} status={status} />}
+          {page === "mcps" && <McpsPage client={clientRef.current} status={status} />}
+          {page === "skills" && <SkillsPage client={clientRef.current} status={status} />}
+          {page === "models" && <ModelsPage client={clientRef.current} status={status} />}
+          {page === "approvals" && <ApprovalsPage client={clientRef.current} status={status} />}
+          {page === "doctor" && <DoctorPage client={clientRef.current} status={status} />}
+          {page === "rpc" && <RpcConsolePage client={clientRef.current} status={status} />}
+        </main>
+      )}
     </div>
   );
 }
