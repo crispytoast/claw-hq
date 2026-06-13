@@ -103,7 +103,7 @@ class MainActivity : Activity() {
         val input = EditText(this).apply {
             inputType = InputType.TYPE_TEXT_VARIATION_URI
             hint = getString(R.string.setup_hint)
-            setHintTextColor(Color.parseColor("#666"))
+            setHintTextColor(Color.parseColor("#666666"))
             setTextColor(Color.parseColor("#F2F2F2"))
             setPadding(dp(12), dp(12), dp(12), dp(12))
             setBackgroundColor(Color.parseColor("#252525"))
