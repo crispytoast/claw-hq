@@ -2,6 +2,7 @@ package app.clawhq
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -17,9 +18,8 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 
 /**
  * Single-activity shell.
@@ -31,13 +31,21 @@ import androidx.core.app.ActivityCompat
  * Long-press the back gesture or tap the "Change relay URL" overflow item
  * (added later — for v0.4 we just expose `clearAndRestart()`) to reset.
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
 
     private var webView: WebView? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // If we crashed last launch, show the trace instead of trying again.
+        val lastCrash = CrashLog.readAndClear(this)
+        if (lastCrash != null) {
+            setContentView(buildCrashView(lastCrash))
+            return
+        }
+
         requestNotificationPermissionIfNeeded()
 
         val relay = RelayConfig.relayUrl(this)
@@ -181,8 +189,59 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         val perm = Manifest.permission.POST_NOTIFICATIONS
         if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(perm), 1001)
+            requestPermissions(arrayOf(perm), 1001)
         }
+    }
+
+    private fun buildCrashView(trace: String): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(48), dp(20), dp(20))
+            setBackgroundColor(Color.parseColor("#1B1B1B"))
+        }
+        root.addView(TextView(this).apply {
+            text = "Crash on last launch"
+            setTextColor(Color.parseColor("#F06868"))
+            textSize = 18f
+            setPadding(0, 0, 0, dp(8))
+        })
+        root.addView(TextView(this).apply {
+            text = "The trace is below — long-press to copy and send to me. Tap Continue to retry."
+            setTextColor(Color.parseColor("#9BA3AB"))
+            textSize = 13f
+            setPadding(0, 0, 0, dp(12))
+        })
+        val scroll = ScrollView(this)
+        scroll.addView(TextView(this).apply {
+            text = trace
+            setTextColor(Color.parseColor("#F2F2F2"))
+            textSize = 11f
+            setTextIsSelectable(true)
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setBackgroundColor(Color.parseColor("#252525"))
+        })
+        val scrollLp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+        )
+        scrollLp.weight = 1f
+        root.addView(scroll, scrollLp)
+        root.addView(Button(this).apply {
+            text = "Continue"
+            setBackgroundColor(Color.parseColor("#5FD1F0"))
+            setTextColor(Color.parseColor("#1B1B1B"))
+            setOnClickListener {
+                recreate()
+            }
+            val lp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+            lp.topMargin = dp(12)
+            layoutParams = lp
+        })
+        return root
     }
 
     override fun onBackPressed() {

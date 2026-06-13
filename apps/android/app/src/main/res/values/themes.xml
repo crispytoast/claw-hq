@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.ClawHq" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <!--
+      Plain Material theme (no AppCompat). MainActivity is a regular Activity
+      so DayNight delegate setup isn't needed. Avoids a class of crashes
+      where AppCompat fails to inflate the night-mode delegate at startup.
+    -->
+    <style name="Theme.ClawHq" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/charcoal</item>
         <item name="android:statusBarColor">@color/charcoal</item>
         <item name="android:navigationBarColor">@color/charcoal</item>
         <item name="android:textColor">@color/text_primary</item>
-        <item name="colorAccent">@color/neon_cyan</item>
+        <item name="android:colorAccent">@color/neon_cyan</item>
     </style>
 </resources>

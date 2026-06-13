@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -38,6 +39,26 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="claw_hq_default" />
+
+        <!--
+          FirebaseInitProvider runs before Application.onCreate and reads the
+          string resources that `com.google.gms.google-services` would
+          normally generate from google-services.json. We don't ship one — we
+          init Firebase programmatically once we have config from
+          /api/push/init. Disable the auto-provider so missing strings don't
+          crash startup. Same for FirebaseMessagingRegistrar (auto-init).
+        -->
+        <provider
+            android:name="com.google.firebase.provider.FirebaseInitProvider"
+            android:authorities="${applicationId}.firebaseinitprovider"
+            tools:node="remove" />
+
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
 
     </application>
 </manifest>

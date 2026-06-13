@@ -33,6 +33,7 @@ class ClawHqApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        CrashLog.install(this)
         ensureNotificationChannel()
         bootstrapPushIfRelayKnown()
     }
@@ -77,6 +78,10 @@ class ClawHqApp : Application() {
         // Initialize the default app if not already present. Re-init throws.
         if (FirebaseApp.getApps(this).any { it.name == FirebaseApp.DEFAULT_APP_NAME }) return
         FirebaseApp.initializeApp(this, opts)
+        // Messaging auto-init is off in the manifest (so missing google-services
+        // resources don't crash boot). Re-enable it now that we have a real
+        // FirebaseApp so the token is allocated and refreshed normally.
+        runCatching { FirebaseMessaging.getInstance().isAutoInitEnabled = true }
     }
 
     private fun fetchFirebaseOptions(relayUrl: String): FirebaseOptions? {
