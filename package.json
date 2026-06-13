@@ -1,0 +1,25 @@
+{
+  "name": "claw-hq",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Cross-device interface for OpenClaw — cloud relay, tunnel agent, and shared protocol types.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.6.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev:cli": "pnpm --filter @claw-hq/cli dev",
+    "dev:relay": "pnpm --filter @claw-hq/cloud-relay dev",
+    "dev:tunnel": "pnpm --filter @claw-hq/tunnel-agent dev",
+    "dev:web": "pnpm --filter @claw-hq/web dev",
+    "init": "pnpm --filter @claw-hq/cli dev init",
+    "start": "pnpm --filter @claw-hq/cli dev start"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.5"
+  }
+}

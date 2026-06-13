@@ -1,0 +1,5 @@
+{
+  "pairingToken": "chq_REPLACE_WITH_PAIRING_TOKEN_FROM_CLOUD",
+  "relayUrl": "ws://localhost:3838",
+  "openclawConfigPath": "~/.openclaw/openclaw.json"
+}
