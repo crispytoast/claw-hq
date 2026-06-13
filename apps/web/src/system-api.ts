@@ -46,6 +46,29 @@ export interface PushConfigStatus {
   updatedAt?: number;
 }
 
+export interface NotificationItem {
+  id: string;
+  title: string;
+  body: string;
+  deepLink: string | null;
+  kind: string;
+  createdAt: number;
+  readAt: number | null;
+}
+
+export interface NotificationsList {
+  notifications: NotificationItem[];
+  unread: number;
+}
+
+export interface PushDevice {
+  token: string;
+  platform: string;
+  label: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
 export const systemApi = {
   version: () => call<VersionInfo>("/api/system/version"),
   checkUpdates: () => call<UpdateCheck>("/api/system/version/check", { method: "POST" }),
@@ -54,4 +77,20 @@ export const systemApi = {
   setPushConfig: (body: { projectId: string; googleServicesJson?: unknown; serviceAccountJson?: unknown }) =>
     call<PushConfigStatus>("/api/system/push/config", { method: "POST", body: JSON.stringify(body) }),
   clearPushConfig: () => call<{ ok: true }>("/api/system/push/config", { method: "DELETE" }),
+
+  // ---------- notifications inbox ----------
+  notifications: (limit = 50) => call<NotificationsList>(`/api/notifications?limit=${limit}`),
+  markRead: (id: string) =>
+    call<{ ok: boolean }>(`/api/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),
+  markAllRead: () => call<{ ok: true; marked: number }>("/api/notifications/read-all", { method: "POST" }),
+
+  // ---------- push devices ----------
+  pushDevices: () => call<{ devices: PushDevice[] }>("/api/push/devices"),
+  deletePushDevice: (token: string) =>
+    call<{ ok: true }>(`/api/push/devices/${encodeURIComponent(token)}`, { method: "DELETE" }),
+  sendTestPush: (body: { title?: string; body?: string } = {}) =>
+    call<{ ok: true; notificationId: string; pushed: number; failed: number }>(
+      "/api/push/send-test",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
 };

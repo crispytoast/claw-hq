@@ -14,6 +14,7 @@ import { resolveConfig, type ClawHqConfig, type ResolvedConfig } from "./config.
 import { openDb } from "./db.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerSystemRoutes } from "./system.js";
+import { registerPushRoutes } from "./push.js";
 import { registerWsRoutes } from "./ws-routing.js";
 
 export interface ServerHandle {
@@ -41,6 +42,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   await fastify.register(fastifyWebsocket);
   await registerAuthRoutes(fastify, { db, config });
   await registerSystemRoutes(fastify, { db, config });
+  await registerPushRoutes(fastify, { db, config });
   registerWsRoutes(fastify, { db, config, inProcessAgentToken: opts.inProcessAgentToken });
 
   if (existsSync(config.webDistPath)) {

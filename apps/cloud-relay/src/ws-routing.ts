@@ -22,10 +22,58 @@ import type Database from "better-sqlite3";
 import { findPairingToken, touchPairingToken } from "./db.js";
 import type { ResolvedConfig } from "./config.js";
 import { resolveOwner } from "./auth.js";
+import { deliverNotification } from "./push.js";
 
 interface SingleTenantState {
   agent: WebSocket | null;
+  /** User id this agent's tunnel-agent is bound to. */
+  agentOwnerId: string | null;
   clients: Map<string, WebSocket>;
+}
+
+/**
+ * Inspect an agent-to-client OpenClaw frame for events that should fire a push
+ * notification. Returns null if the frame is uninteresting.
+ *
+ * Listens for:
+ *   - `agent` event with `data.phase: "end"`  — agent turn finished
+ *   - `exec.approval.requested` event         — needs human approval
+ */
+function notificationForFrame(envelope: TunnelEnvelope):
+  | { title: string; body: string; kind: string; deepLink?: string | null; data?: Record<string, string> }
+  | null {
+  if (envelope.kind !== "frame" || envelope.direction !== "agent-to-client") return null;
+  const frame = envelope.frame;
+  if (frame.type !== "event") return null;
+  const payload = (frame.payload ?? {}) as Record<string, unknown>;
+  const data = (payload.data ?? {}) as Record<string, unknown>;
+
+  if (frame.event === "agent" && data.phase === "end") {
+    const session = typeof data.sessionId === "string" ? data.sessionId : "session";
+    const status = typeof data.status === "string" ? data.status : "finished";
+    const title = `Agent run ${status}`;
+    const summary = typeof data.summary === "string" ? data.summary : `Session ${session}.`;
+    return {
+      title,
+      body: summary,
+      kind: "agent.end",
+      deepLink: typeof data.sessionId === "string" ? `/chat/${data.sessionId}` : null,
+      data: typeof data.sessionId === "string" ? { sessionId: data.sessionId } : undefined,
+    };
+  }
+
+  if (frame.event === "exec.approval.requested") {
+    const cmd = typeof data.command === "string" ? data.command : "Command";
+    return {
+      title: "Approval required",
+      body: cmd.length > 120 ? cmd.slice(0, 117) + "..." : cmd,
+      kind: "exec.approval",
+      deepLink: "/approvals",
+      data: typeof data.approvalId === "string" ? { approvalId: data.approvalId } : undefined,
+    };
+  }
+
+  return null;
 }
 
 interface RoutingDeps {
@@ -38,7 +86,35 @@ interface RoutingDeps {
 
 export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): void {
   const { db, config, inProcessAgentToken } = deps;
-  const state: SingleTenantState = { agent: null, clients: new Map() };
+  const state: SingleTenantState = { agent: null, agentOwnerId: null, clients: new Map() };
+
+  function ownerIdForAgentToken(token: string): string {
+    if (inProcessAgentToken && token === inProcessAgentToken) {
+      // Single-host trusted-lan default: the synthetic owner.
+      return "owner";
+    }
+    const row = findPairingToken(db, token);
+    return row?.user_id ?? "owner";
+  }
+
+  function maybeFirePushFromFrame(envelope: TunnelEnvelope): void {
+    if (!state.agentOwnerId) return;
+    const n = notificationForFrame(envelope);
+    if (!n) return;
+    void deliverNotification(
+      { db, config },
+      {
+        userId: state.agentOwnerId,
+        title: n.title,
+        body: n.body,
+        kind: n.kind,
+        deepLink: n.deepLink ?? null,
+        data: n.data,
+      },
+    ).catch((err) => {
+      console.warn(`[push] deliverNotification threw: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 
   function sendEnvelope(socket: WebSocket, envelope: TunnelEnvelope): void {
     if (socket.readyState !== 1) return;
@@ -85,6 +161,7 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
         state.agent.close(1000, "replaced");
       }
       state.agent = socket;
+      state.agentOwnerId = ownerIdForAgentToken(token);
 
       socket.on("message", (raw) => {
         const parsed = safeParse(raw.toString());
@@ -105,6 +182,7 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
           if (client && client.readyState === 1) {
             client.send(JSON.stringify(envelope));
           }
+          maybeFirePushFromFrame(envelope);
           return;
         }
 
@@ -116,7 +194,10 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
 
       socket.on("close", (code, reason) => {
         console.log(`[relay] -agent conn=${connId} code=${code} reason=${reason.toString() || "(none)"}`);
-        if (state.agent === socket) state.agent = null;
+        if (state.agent === socket) {
+          state.agent = null;
+          state.agentOwnerId = null;
+        }
       });
 
       socket.on("error", (err) => {

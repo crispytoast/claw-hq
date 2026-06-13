@@ -5,6 +5,8 @@ import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { ChatPane } from "./ChatPane.js";
 import { SessionList } from "./SessionList.js";
 import { Settings } from "./Settings.js";
+import { NotificationsInbox } from "./NotificationsInbox.js";
+import { systemApi } from "../system-api.js";
 
 interface Props {
   user: User;
@@ -27,6 +29,8 @@ export function ChatApp({ user, onLogout }: Props) {
   const [showSidebar, setShowSidebar] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showInbox, setShowInbox] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     const c = new GatewayClient(defaultGatewayUrl());
@@ -107,10 +111,47 @@ export function ChatApp({ user, onLogout }: Props) {
     return () => window.removeEventListener("click", handler);
   }, [menuOpen]);
 
+  // Poll unread count every 20s so the bell badge stays roughly fresh.
+  // (Push triggers already fan out via FCM; this is for the web fallback path.)
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const list = await systemApi.notifications(1);
+        if (!cancelled) setUnreadCount(list.unread);
+      } catch {
+        // unauthenticated or relay down — ignore
+      }
+    };
+    void tick();
+    const id = setInterval(() => void tick(), 20_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   const pill = useMemo(() => statusPill(status), [status]);
 
   if (showSettings) {
     return <Settings user={user} onClose={() => setShowSettings(false)} />;
+  }
+
+  if (showInbox) {
+    return (
+      <NotificationsInbox
+        onClose={() => {
+          setShowInbox(false);
+          // Refresh badge after the user dismisses (they may have marked stuff read).
+          void systemApi.notifications(1).then((l) => setUnreadCount(l.unread)).catch(() => {});
+        }}
+        onOpenDeepLink={(link) => {
+          // /chat/<sessionKey> deep links jump to that session.
+          const m = link.match(/^\/chat\/(.+)$/);
+          if (m) {
+            setActiveKey(m[1] ?? null);
+            setShowInbox(false);
+          }
+        }}
+      />
+    );
   }
 
   return (
@@ -164,6 +205,17 @@ export function ChatApp({ user, onLogout }: Props) {
           <div className="title">
             {sessions.find((s) => s.sessionKey === activeKey)?.label ?? "No session"}
           </div>
+          <button
+            className="bell-btn"
+            aria-label="notifications"
+            onClick={() => setShowInbox(true)}
+            title={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"}
+          >
+            🔔
+            {unreadCount > 0 && (
+              <span className="bell-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>
+            )}
+          </button>
           <span className={`status-pill ${pill.cls}`}>
             <span className="status-dot" />
             {pill.label}

@@ -29,6 +29,26 @@ export interface PairingTokenRow {
   last_used_at: number | null;
 }
 
+export interface PushDeviceRow {
+  token: string;
+  user_id: string;
+  platform: string;
+  label: string;
+  created_at: number;
+  last_used_at: number | null;
+}
+
+export interface NotificationRow {
+  id: string;
+  user_id: string;
+  title: string;
+  body: string;
+  deep_link: string | null;
+  kind: string;
+  created_at: number;
+  read_at: number | null;
+}
+
 let dbInstance: Database.Database | null = null;
 
 export function openDb(path: string): Database.Database {
@@ -55,6 +75,30 @@ export function openDb(path: string): Database.Database {
     );
 
     CREATE INDEX IF NOT EXISTS idx_pairing_tokens_user ON pairing_tokens(user_id);
+
+    CREATE TABLE IF NOT EXISTS push_devices (
+      token         TEXT PRIMARY KEY,
+      user_id       TEXT NOT NULL,
+      platform      TEXT NOT NULL,
+      label         TEXT NOT NULL,
+      created_at    INTEGER NOT NULL,
+      last_used_at  INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_push_devices_user ON push_devices(user_id);
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id            TEXT PRIMARY KEY,
+      user_id       TEXT NOT NULL,
+      title         TEXT NOT NULL,
+      body          TEXT NOT NULL,
+      deep_link     TEXT,
+      kind          TEXT NOT NULL,
+      created_at    INTEGER NOT NULL,
+      read_at       INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
   `);
   dbInstance = db;
   return db;
@@ -117,4 +161,102 @@ export function deletePairingToken(db: Database.Database, args: { userId: string
     .prepare(`DELETE FROM pairing_tokens WHERE user_id = ? AND token = ?`)
     .run(args.userId, args.token);
   return res.changes > 0;
+}
+
+// ---------- push_devices ----------
+
+export function upsertPushDevice(
+  db: Database.Database,
+  args: { userId: string; token: string; platform: string; label: string },
+): PushDeviceRow {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO push_devices (token, user_id, platform, label, created_at, last_used_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(token) DO UPDATE SET
+       user_id = excluded.user_id,
+       platform = excluded.platform,
+       label = excluded.label,
+       last_used_at = excluded.last_used_at`,
+  ).run(args.token, args.userId, args.platform, args.label, now, now);
+  return {
+    token: args.token,
+    user_id: args.userId,
+    platform: args.platform,
+    label: args.label,
+    created_at: now,
+    last_used_at: now,
+  };
+}
+
+export function listPushDevices(db: Database.Database, userId: string): PushDeviceRow[] {
+  return db
+    .prepare(`SELECT * FROM push_devices WHERE user_id = ? ORDER BY created_at DESC`)
+    .all(userId) as PushDeviceRow[];
+}
+
+export function listAllPushDevices(db: Database.Database): PushDeviceRow[] {
+  return db.prepare(`SELECT * FROM push_devices`).all() as PushDeviceRow[];
+}
+
+export function deletePushDevice(db: Database.Database, token: string): boolean {
+  const res = db.prepare(`DELETE FROM push_devices WHERE token = ?`).run(token);
+  return res.changes > 0;
+}
+
+// ---------- notifications ----------
+
+export function createNotification(
+  db: Database.Database,
+  args: { userId: string; title: string; body: string; deepLink?: string | null; kind: string },
+): NotificationRow {
+  const id = randomUUID();
+  const created_at = Date.now();
+  db.prepare(
+    `INSERT INTO notifications (id, user_id, title, body, deep_link, kind, created_at, read_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+  ).run(id, args.userId, args.title, args.body, args.deepLink ?? null, args.kind, created_at);
+  return {
+    id,
+    user_id: args.userId,
+    title: args.title,
+    body: args.body,
+    deep_link: args.deepLink ?? null,
+    kind: args.kind,
+    created_at,
+    read_at: null,
+  };
+}
+
+export function listNotifications(
+  db: Database.Database,
+  args: { userId: string; limit: number },
+): NotificationRow[] {
+  return db
+    .prepare(`SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`)
+    .all(args.userId, args.limit) as NotificationRow[];
+}
+
+export function markNotificationRead(
+  db: Database.Database,
+  args: { userId: string; id: string },
+): boolean {
+  const res = db
+    .prepare(`UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ? AND read_at IS NULL`)
+    .run(Date.now(), args.id, args.userId);
+  return res.changes > 0;
+}
+
+export function markAllNotificationsRead(db: Database.Database, userId: string): number {
+  const res = db
+    .prepare(`UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL`)
+    .run(Date.now(), userId);
+  return res.changes;
+}
+
+export function unreadNotificationCount(db: Database.Database, userId: string): number {
+  const row = db
+    .prepare(`SELECT COUNT(*) as c FROM notifications WHERE user_id = ? AND read_at IS NULL`)
+    .get(userId) as { c: number };
+  return row.c;
 }
