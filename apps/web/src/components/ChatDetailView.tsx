@@ -959,10 +959,21 @@ function highlightText(text: string, query: string | undefined): React.ReactNode
   return out;
 }
 
+// Image extensions BubbleContent treats as renderable inline. Sourced from the
+// URL path (server-computed) so the model can't trick us into rendering a
+// non-image with a misleading filename.
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|heic|heif|avif)(?:$|\?)/i;
+
+function isInlineImageUrl(url: string): boolean {
+  if (!url.startsWith("/uploads/")) return false;
+  return IMAGE_EXT_RE.test(url);
+}
+
 /**
  * Render bubble text with `[label](url)` links turned into clickable anchors so
- * attachment refs show up properly. No other markdown — we don't want to
- * over-interpret model output. Optionally highlights case-insensitive matches
+ * attachment refs show up properly. For `/uploads/<id>.<imageExt>` links we
+ * also render an inline thumbnail above the link so the chat shows what was
+ * actually sent after a reload. Optionally highlights case-insensitive matches
  * of `highlight` with `<mark>`.
  */
 function BubbleContent({ text, highlight }: { text: string; highlight?: string }) {
@@ -981,15 +992,34 @@ function BubbleContent({ text, highlight }: { text: string; highlight?: string }
   }, [text]);
   return (
     <>
-      {parts.map((p, i) =>
-        p.kind === "link" ? (
-          <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="bubble-link">
-            {highlightText(p.text, highlight)}
-          </a>
-        ) : (
-          <span key={i}>{highlightText(p.text, highlight)}</span>
-        ),
-      )}
+      {parts.map((p, i) => {
+        if (p.kind !== "link") {
+          return <span key={i}>{highlightText(p.text, highlight)}</span>;
+        }
+        const url = p.url ?? "";
+        const isImage = isInlineImageUrl(url);
+        return (
+          <span key={i} className={isImage ? "bubble-link-image-wrap" : undefined}>
+            {isImage && (
+              <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
+                <img
+                  src={url}
+                  alt={p.text}
+                  className="bubble-image-thumb"
+                  loading="lazy"
+                  onError={(e) => {
+                    // Hide if the upload was deleted or content isn't actually an image.
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              </a>
+            )}
+            <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-link">
+              {highlightText(p.text, highlight)}
+            </a>
+          </span>
+        );
+      })}
     </>
   );
 }

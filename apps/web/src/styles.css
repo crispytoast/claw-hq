@@ -1352,6 +1352,27 @@ a:hover { text-decoration: underline; }
 }
 .bubble.user .bubble-link { color: inherit; text-decoration: underline; }
 
+.bubble-link-image-wrap {
+  display: block;
+  margin: 4px 0;
+}
+.bubble-image-link {
+  display: inline-block;
+  margin-bottom: 4px;
+}
+.bubble-image-thumb {
+  display: block;
+  max-width: 280px;
+  max-height: 280px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev1);
+  object-fit: contain;
+}
+.bubble.user .bubble-image-thumb {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
 .bubble-hit {
   background: rgba(255, 224, 102, 0.42);
   color: inherit;
