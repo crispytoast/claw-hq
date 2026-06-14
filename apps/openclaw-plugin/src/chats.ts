@@ -193,6 +193,119 @@ export interface DeleteResult {
   projectSlug: string | null;
 }
 
+export interface SnippetHit {
+  messageId: string;
+  role: ChatRole;
+  createdMs: number;
+  /** Context window around the first match, with [..] markers if truncated. */
+  snippet: string;
+}
+
+export interface ChatSearchHit {
+  id: string;
+  projectSlug: string | null;
+  title: string;
+  updatedMs: number;
+  matchCount: number;
+  /** First few matched messages with surrounding text. */
+  snippets: SnippetHit[];
+}
+
+export interface ChatSearchResult {
+  hits: ChatSearchHit[];
+  totalChatsScanned: number;
+  query: string;
+}
+
+const SNIPPET_WINDOW = 60;
+const MAX_SNIPPETS_PER_CHAT = 3;
+
+function buildSnippet(text: string, matchIdx: number, matchLen: number): string {
+  const start = Math.max(0, matchIdx - SNIPPET_WINDOW);
+  const end = Math.min(text.length, matchIdx + matchLen + SNIPPET_WINDOW);
+  const prefix = start > 0 ? "[..]" : "";
+  const suffix = end < text.length ? "[..]" : "";
+  // Collapse multi-line content to a single line so the snippet stays compact.
+  const slice = text.slice(start, end).replace(/\s+/g, " ").trim();
+  return `${prefix}${slice}${suffix}`;
+}
+
+export async function searchChats(input: {
+  query: string;
+  projectSlug?: string | null;
+  limit?: number;
+}): Promise<ChatSearchResult> {
+  const query = (input.query ?? "").trim();
+  if (!query) return { hits: [], totalChatsScanned: 0, query };
+  const needle = query.toLowerCase();
+  const needleLen = query.length;
+  const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
+  const filterSlug =
+    input.projectSlug && VALID_SLUG.test(input.projectSlug) ? input.projectSlug : null;
+  await ensureDir();
+  let files: string[];
+  try {
+    files = await fs.readdir(CHATS_DIR);
+  } catch {
+    return { hits: [], totalChatsScanned: 0, query };
+  }
+  const hits: ChatSearchHit[] = [];
+  let scanned = 0;
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    scanned++;
+    let chat: Chat;
+    try {
+      const raw = await fs.readFile(path.join(CHATS_DIR, file), "utf8");
+      chat = JSON.parse(raw) as Chat;
+    } catch {
+      continue;
+    }
+    if (filterSlug && chat.projectSlug !== filterSlug) continue;
+
+    let matchCount = 0;
+    const snippets: SnippetHit[] = [];
+    // Title is also searchable so users can find "Phase B planning" by name.
+    const titleLower = chat.title.toLowerCase();
+    if (titleLower.includes(needle)) matchCount++;
+    for (const m of chat.messages) {
+      const content = m.content ?? "";
+      const lower = content.toLowerCase();
+      let idx = lower.indexOf(needle);
+      if (idx === -1) continue;
+      let perMessageMatches = 0;
+      while (idx !== -1) {
+        perMessageMatches++;
+        idx = lower.indexOf(needle, idx + needleLen);
+      }
+      matchCount += perMessageMatches;
+      if (snippets.length < MAX_SNIPPETS_PER_CHAT) {
+        snippets.push({
+          messageId: m.id,
+          role: m.role,
+          createdMs: m.createdMs,
+          snippet: buildSnippet(content, lower.indexOf(needle), needleLen),
+        });
+      }
+    }
+    if (matchCount === 0) continue;
+    hits.push({
+      id: chat.id,
+      projectSlug: chat.projectSlug,
+      title: chat.title,
+      updatedMs: chat.updatedMs,
+      matchCount,
+      snippets,
+    });
+  }
+  // Sort by match count desc, tiebreak by recency desc.
+  hits.sort((a, b) => {
+    if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
+    return b.updatedMs - a.updatedMs;
+  });
+  return { hits: hits.slice(0, limit), totalChatsScanned: scanned, query };
+}
+
 export async function deleteChat(id: string): Promise<DeleteResult | null> {
   if (!VALID_CHAT_ID.test(id)) return null;
   return withChatLock(id, async () => {

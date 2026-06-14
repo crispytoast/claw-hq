@@ -1106,6 +1106,53 @@ a:hover { text-decoration: underline; }
   font-size: 0.95rem;
 }
 .cl-project-open:hover { background: var(--bg-elev2); color: var(--accent); }
+
+.cl-search-wrap {
+  position: relative;
+  padding: 0 4px 6px;
+}
+.cl-search-input {
+  width: 100%;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  border-radius: 6px;
+  padding: 6px 28px 6px 10px;
+  font: inherit;
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 120ms;
+}
+.cl-search-input:focus { border-color: var(--accent); }
+.cl-search-input::-webkit-search-cancel-button { display: none; }
+.cl-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(calc(-50% - 3px));
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.cl-search-clear:hover { color: var(--accent); background: var(--bg-elev1); }
+.cl-search-hit .cl-row-title { font-size: 0.88rem; }
+.cl-search-snippet {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cl-search-role {
+  color: var(--accent);
+  text-transform: lowercase;
+}
 .cl-chat-actions-popover {
   top: 32px;
   right: 4px;

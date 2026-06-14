@@ -63,6 +63,28 @@ interface ChatsListResponse {
   chats: ChatSummary[];
 }
 
+interface SnippetHit {
+  messageId: string;
+  role: "user" | "assistant" | "system";
+  createdMs: number;
+  snippet: string;
+}
+
+interface ChatSearchHit {
+  id: string;
+  projectSlug: string | null;
+  title: string;
+  updatedMs: number;
+  matchCount: number;
+  snippets: SnippetHit[];
+}
+
+interface ChatSearchResponse {
+  hits: ChatSearchHit[];
+  totalChatsScanned: number;
+  query: string;
+}
+
 interface ChatCreateResponse {
   chat: ChatSummary;
 }
@@ -124,6 +146,13 @@ export function Sidebar({
   const [actionsOpenForChat, setActionsOpenForChat] = useState<string | null>(null);
   /** chatId currently being inline-renamed, with its draft title. */
   const [renamingChat, setRenamingChat] = useState<{ chatId: string; draft: string } | null>(null);
+  /** Live chat-search input. */
+  const [searchInput, setSearchInput] = useState("");
+  /** Active query (debounced) being executed against the plugin. */
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<ChatSearchHit[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchErr, setSearchErr] = useState<string | null>(null);
 
   const loadProjects = useCallback(async () => {
     if (!client || status.kind !== "ready") return;
@@ -372,6 +401,47 @@ export function Sidebar({
     return () => window.removeEventListener("click", onDocClick);
   }, [menuOpen]);
 
+  // Debounce the search input → searchQuery so we don't slam the plugin every
+  // keystroke. 200ms feels snappy without being chatty.
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed.length < 2) {
+      setSearchQuery("");
+      setSearchResults(null);
+      setSearchErr(null);
+      return;
+    }
+    const id = setTimeout(() => setSearchQuery(trimmed), 200);
+    return () => clearTimeout(id);
+  }, [searchInput]);
+
+  // Fire the actual search whenever searchQuery changes.
+  useEffect(() => {
+    if (!client || status.kind !== "ready" || !searchQuery) return;
+    let cancelled = false;
+    setSearchLoading(true);
+    setSearchErr(null);
+    void client
+      .call<ChatSearchResponse>("clawhq.chats.search", { query: searchQuery, limit: 30 })
+      .then((res) => {
+        if (cancelled) return;
+        setSearchResults(res.hits);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSearchErr(err instanceof Error ? err.message : String(err));
+        setSearchResults([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSearchLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, status.kind, searchQuery]);
+
+  const searching = searchQuery.length > 0;
+
   // Filter is by agent id parsed from the sessionKey (agent:<id>:<tail>). For
   // Phase A this is purely informational — we surface the same set of chips
   // OHQ shows for projects.
@@ -442,78 +512,150 @@ export function Sidebar({
 
             <div className={`cl-group-body ${sessionsOpen ? "cl-expanded" : ""}`}>
               <div className="cl-group-inner">
-                <button
-                  type="button"
-                  className="cl-new-btn"
-                  onClick={() => pick("sessions")}
-                  title="Browse all sessions"
-                >
-                  <span>＋</span>
-                  <span>All sessions</span>
-                </button>
-
-                {agentIds.length > 1 && (
-                  <div className="cl-filter-chips">
+                <div className="cl-search-wrap">
+                  <input
+                    type="search"
+                    className="cl-search-input"
+                    placeholder="Search chats…"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                  />
+                  {searchInput && (
                     <button
                       type="button"
-                      className={`cl-filter-chip ${filter === "all" ? "cl-active" : ""}`}
-                      onClick={() => setFilter("all")}
-                    >
-                      All
-                    </button>
-                    {agentIds.map((id) => (
-                      <button
-                        key={id}
-                        type="button"
-                        className={`cl-filter-chip ${filter === id ? "cl-active" : ""}`}
-                        onClick={() => setFilter(id)}
-                      >
-                        {id}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {filteredSessions.length > 0 && (
-                  <div className="cl-section-label">Recent</div>
-                )}
-
-                <div className="cl-list">
-                  {filteredSessions.length === 0 ? (
-                    <div className="cl-list-empty">
-                      {sessions.length === 0 ? "No sessions yet." : "No sessions match this filter."}
-                    </div>
-                  ) : (
-                    filteredSessions.map((s) => {
-                      const isActive = page === "chat" && s.sessionKey === activeSessionKey;
-                      const agent = s.agentId ?? s.sessionKey.split(":")[1] ?? null;
-                      return (
-                        <button
-                          key={s.sessionKey}
-                          type="button"
-                          className={`cl-row ${isActive ? "cl-active" : ""}`}
-                          onClick={() => {
-                            onPickSession(s.sessionKey);
-                            onMobileClose();
-                          }}
-                        >
-                          <div className="cl-row-main">
-                            <span className="cl-row-title">{s.label}</span>
-                          </div>
-                          <div className="cl-row-meta">
-                            {agent && (
-                              <>
-                                <span className="cl-row-tag">{agent}</span>
-                                <span>·</span>
-                              </>
-                            )}
-                            <span>{s.lastActivityMs ? relativeTime(s.lastActivityMs) : "—"}</span>
-                          </div>
-                        </button>
-                      );
-                    })
+                      className="cl-search-clear"
+                      aria-label="Clear search"
+                      onClick={() => setSearchInput("")}
+                    >✕</button>
                   )}
                 </div>
+
+                {searching ? (
+                  <>
+                    {searchLoading && searchResults === null && (
+                      <div className="cl-list-empty">Searching…</div>
+                    )}
+                    {searchErr && <div className="cl-list-empty" title={searchErr}>{searchErr.slice(0, 60)}</div>}
+                    {searchResults && (
+                      <>
+                        <div className="cl-section-label">
+                          {searchResults.length === 0 ? "No matches" : `${searchResults.length} chat${searchResults.length === 1 ? "" : "s"} matched`}
+                        </div>
+                        <div className="cl-list">
+                          {searchResults.map((h) => {
+                            const isHitActive = activeChatId === h.id;
+                            return (
+                              <button
+                                key={h.id}
+                                type="button"
+                                className={`cl-row cl-search-hit ${isHitActive ? "cl-active" : ""}`}
+                                title={h.title}
+                                onClick={() => {
+                                  onPickChat(h.id, h.projectSlug);
+                                  onMobileClose();
+                                }}
+                              >
+                                <div className="cl-row-main">
+                                  <span className="cl-row-title">{h.title}</span>
+                                  {h.snippets[0] && (
+                                    <span className="cl-search-snippet">
+                                      <span className="cl-search-role">{h.snippets[0].role}:</span>{" "}
+                                      {h.snippets[0].snippet}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="cl-row-meta">
+                                  {h.projectSlug && (
+                                    <>
+                                      <span className="cl-row-tag">{h.projectSlug}</span>
+                                      <span>·</span>
+                                    </>
+                                  )}
+                                  <span>{h.matchCount} hit{h.matchCount === 1 ? "" : "s"}</span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="cl-new-btn"
+                      onClick={() => pick("sessions")}
+                      title="Browse all sessions"
+                    >
+                      <span>＋</span>
+                      <span>All sessions</span>
+                    </button>
+
+                    {agentIds.length > 1 && (
+                      <div className="cl-filter-chips">
+                        <button
+                          type="button"
+                          className={`cl-filter-chip ${filter === "all" ? "cl-active" : ""}`}
+                          onClick={() => setFilter("all")}
+                        >
+                          All
+                        </button>
+                        {agentIds.map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            className={`cl-filter-chip ${filter === id ? "cl-active" : ""}`}
+                            onClick={() => setFilter(id)}
+                          >
+                            {id}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {filteredSessions.length > 0 && (
+                      <div className="cl-section-label">Recent</div>
+                    )}
+
+                    <div className="cl-list">
+                      {filteredSessions.length === 0 ? (
+                        <div className="cl-list-empty">
+                          {sessions.length === 0 ? "No sessions yet." : "No sessions match this filter."}
+                        </div>
+                      ) : (
+                        filteredSessions.map((s) => {
+                          const isActive = page === "chat" && s.sessionKey === activeSessionKey;
+                          const agent = s.agentId ?? s.sessionKey.split(":")[1] ?? null;
+                          return (
+                            <button
+                              key={s.sessionKey}
+                              type="button"
+                              className={`cl-row ${isActive ? "cl-active" : ""}`}
+                              onClick={() => {
+                                onPickSession(s.sessionKey);
+                                onMobileClose();
+                              }}
+                            >
+                              <div className="cl-row-main">
+                                <span className="cl-row-title">{s.label}</span>
+                              </div>
+                              <div className="cl-row-meta">
+                                {agent && (
+                                  <>
+                                    <span className="cl-row-tag">{agent}</span>
+                                    <span>·</span>
+                                  </>
+                                )}
+                                <span>{s.lastActivityMs ? relativeTime(s.lastActivityMs) : "—"}</span>
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>

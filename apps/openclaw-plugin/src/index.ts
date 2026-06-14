@@ -8,12 +8,13 @@ import {
   getChatHistory,
   listChats,
   renameChat,
+  searchChats,
   type ChatRole,
 } from "./chats.js";
 import { toggleTask } from "./tasks.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.7";
+const PLUGIN_VERSION = "0.0.8";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -347,6 +348,7 @@ export default definePluginEntry({
             "clawhq.chats.append",
             "clawhq.chats.rename",
             "clawhq.chats.delete",
+            "clawhq.chats.search",
             "clawhq.tasks.toggle",
           ],
         });
@@ -451,6 +453,39 @@ export default definePluginEntry({
             typeof p.projectSlug === "string" ? p.projectSlug : undefined;
           const chats = await listChats(projectSlug);
           respond(true, { chats });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.chats.search",
+      async ({ respond, params }) => {
+        try {
+          const p = (params ?? {}) as {
+            query?: unknown;
+            projectSlug?: unknown;
+            limit?: unknown;
+          };
+          if (typeof p.query !== "string") {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: query",
+            });
+            return;
+          }
+          const result = await searchChats({
+            query: p.query,
+            projectSlug:
+              typeof p.projectSlug === "string" ? p.projectSlug : undefined,
+            limit: typeof p.limit === "number" ? p.limit : undefined,
+          });
+          respond(true, result);
         } catch (e) {
           respond(false, undefined, {
             code: "INTERNAL",
