@@ -1516,6 +1516,8 @@ a:hover { text-decoration: underline; }
   gap: 8px;
   padding: 4px 12px 12px;
 }
+
+.skills-install-error { color: var(--red); }
 .cl-chat-actions-popover {
   top: 32px;
   right: 4px;
