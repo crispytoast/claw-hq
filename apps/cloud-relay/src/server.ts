@@ -15,6 +15,7 @@ import { openDb } from "./db.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerSystemRoutes } from "./system.js";
 import { registerPushRoutes } from "./push.js";
+import { registerUploadsRoutes } from "./uploads.js";
 import { registerWsRoutes } from "./ws-routing.js";
 
 export interface ServerHandle {
@@ -43,6 +44,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   await registerAuthRoutes(fastify, { db, config });
   await registerSystemRoutes(fastify, { db, config });
   await registerPushRoutes(fastify, { db, config });
+  await registerUploadsRoutes(fastify, { db, config });
   registerWsRoutes(fastify, { db, config, inProcessAgentToken: opts.inProcessAgentToken });
 
   if (existsSync(config.webDistPath)) {
@@ -51,7 +53,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       prefix: "/",
     });
     fastify.setNotFoundHandler(async (req, reply) => {
-      if (req.url.startsWith("/api/") || req.url.startsWith("/ws/")) {
+      if (req.url.startsWith("/api/") || req.url.startsWith("/ws/") || req.url.startsWith("/uploads/")) {
         reply.code(404);
         return { error: "not found" };
       }

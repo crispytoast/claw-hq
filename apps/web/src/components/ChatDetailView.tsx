@@ -2,6 +2,60 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 
+interface UploadedAttachment {
+  /** Local-only id so we can dedupe + drop entries from the pending list. */
+  localId: string;
+  /** SHA-256 returned by /api/uploads. */
+  uploadId: string;
+  url: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  /** Kept so we can re-read bytes as base64 for chat.send. */
+  file: File;
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  // btoa over a binary string. Build it from a Uint8Array.
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(bin);
+}
+
+interface UploadResponse {
+  id: string;
+  url: string;
+  mimeType: string;
+  filename: string;
+  size: number;
+}
+
+async function uploadFile(file: File): Promise<UploadResponse> {
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  const res = await fetch("/api/uploads", { method: "POST", body: fd, credentials: "same-origin" });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`upload failed: ${res.status} ${text.slice(0, 80)}`);
+  }
+  return res.json() as Promise<UploadResponse>;
+}
+
+function newLocalId(): string {
+  return `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
 interface Props {
   client: GatewayClient;
   chatId: string;
@@ -108,11 +162,52 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   const memoryInjectedRef = useRef(false);
   /** Message ids we just persisted via clawhq.chats.append; lets us drop our own broadcast echo. */
   const recentlyPersistedIdsRef = useRef<Set<string>>(new Set());
+  const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
+  const [uploading, setUploading] = useState<Set<string>>(new Set());
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sessionKey = useMemo(() => sessionKeyFor(chatId), [chatId]);
 
   const noteOwnPersist = useCallback((id: string) => {
     recentlyPersistedIdsRef.current.add(id);
     setTimeout(() => recentlyPersistedIdsRef.current.delete(id), 10_000);
+  }, []);
+
+  const addFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const list = Array.from(files);
+      if (list.length === 0) return;
+      for (const file of list) {
+        const localId = newLocalId();
+        setUploading((s) => new Set(s).add(localId));
+        try {
+          const res = await uploadFile(file);
+          const next: UploadedAttachment = {
+            localId,
+            uploadId: res.id,
+            url: res.url,
+            filename: res.filename,
+            mimeType: res.mimeType,
+            size: res.size,
+            file,
+          };
+          setAttachments((prev) => [...prev, next]);
+        } catch (e) {
+          setErr(e instanceof Error ? e.message : String(e));
+        } finally {
+          setUploading((s) => {
+            const next = new Set(s);
+            next.delete(localId);
+            return next;
+          });
+        }
+      }
+    },
+    [],
+  );
+
+  const removeAttachment = useCallback((localId: string) => {
+    setAttachments((prev) => prev.filter((a) => a.localId !== localId));
   }, []);
 
   // Auto-scroll to bottom on new messages.
@@ -249,41 +344,65 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();
-    if (!text || status.kind !== "ready" || pending) return;
+    const pendingAttachments = attachments;
+    if (!text && pendingAttachments.length === 0) return;
+    if (status.kind !== "ready" || pending) return;
     setInput("");
     setErr("");
     setPending(true);
+    setAttachments([]);
+
+    // Build the persisted body — annotate each attachment with an inline link so
+    // chat history shows what was sent and lets the user re-open the upload.
+    const attachmentLines = pendingAttachments.map(
+      (a) => `[📎 ${a.filename}](${a.url})`,
+    );
+    const persistedBody = [text, ...attachmentLines].filter(Boolean).join("\n\n");
+    const displayText = persistedBody || "(attachment)";
 
     // Optimistic user bubble.
-    const optimistic: DisplayMessage = { id: newId(), role: "user", text };
+    const optimistic: DisplayMessage = { id: newId(), role: "user", text: displayText };
     setMessages((prev) => [...prev, optimistic]);
 
     try {
-      // 1) Persist user turn.
       const appendResult = await client.call<{ message?: { id?: string } }>(
         "clawhq.chats.append",
-        { chatId, role: "user", content: text },
+        { chatId, role: "user", content: persistedBody || `[attachment x${pendingAttachments.length}]` },
       );
       if (appendResult?.message?.id) noteOwnPersist(appendResult.message.id);
 
-      // 2) On the first user turn (this page session), prepend project memory
-      //    so OpenClaw answers with full project context. Subsequent turns rely
-      //    on the agent session's own retained memory.
-      let payload = text;
+      let payload = text || "(see attached files)";
       if (!memoryInjectedRef.current) {
         const preamble = await buildMemoryPreamble(client, projectSlug);
-        if (preamble) payload = `${preamble}${text}`;
+        if (preamble) payload = `${preamble}${payload}`;
         memoryInjectedRef.current = true;
       }
 
-      // 3) Send to OpenClaw. Assistant reply streams in via the chat event handler.
-      await client.call("chat.send", {
+      // Convert each pending attachment to OpenClaw's chat.send shape. We use
+      // the canonical `source: {type: "base64", media_type, data}` form so the
+      // gateway normalizer treats it as an inline upload.
+      const oclawAttachments = await Promise.all(
+        pendingAttachments.map(async (a) => ({
+          type: a.mimeType.startsWith("image/") ? "image" : "file",
+          mimeType: a.mimeType,
+          fileName: a.filename,
+          source: {
+            type: "base64",
+            media_type: a.mimeType,
+            data: await fileToBase64(a.file),
+          },
+        })),
+      );
+
+      const sendParams: Record<string, unknown> = {
         sessionKey,
         message: payload,
         idempotencyKey: `clawhq-${chatId}-${Date.now()}-${Math.random()
           .toString(36)
           .slice(2, 8)}`,
-      });
+      };
+      if (oclawAttachments.length > 0) sendParams.attachments = oclawAttachments;
+      await client.call("chat.send", sendParams);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg);
@@ -293,7 +412,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       ]);
       setPending(false);
     }
-  }, [client, chatId, projectSlug, sessionKey, input, status.kind, pending, noteOwnPersist]);
+  }, [client, chatId, projectSlug, sessionKey, input, attachments, status.kind, pending, noteOwnPersist]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -307,11 +426,27 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     if (chatTitle && onTitleChange) onTitleChange(chatId, chatTitle);
   }, [chatTitle, chatId, onTitleChange]);
 
-  const canSend = status.kind === "ready" && input.trim().length > 0 && !pending;
+  const canSend =
+    status.kind === "ready" &&
+    !pending &&
+    uploading.size === 0 &&
+    (input.trim().length > 0 || attachments.length > 0);
+
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer?.files?.length) void addFiles(e.dataTransfer.files);
+  };
 
   return (
     <>
-      <div className="message-list" ref={listRef}>
+      <div
+        className={`message-list ${dragOver ? "drag-over" : ""}`}
+        ref={listRef}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+      >
         {loading && (
           <div className="empty">
             <div className="big">⏳</div>
@@ -328,15 +463,61 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         {messages.map((m) => (
           <div key={m.id} className={`bubble ${m.role}`}>
             {m.role === "system" && <span className="role-tag">system</span>}
-            {m.text}
+            <BubbleContent text={m.text} />
             {m.streaming && <span className="spinner" style={{ marginLeft: "0.5rem" }} />}
           </div>
         ))}
         {err && <div className="bubble system">{err}</div>}
+        {dragOver && (
+          <div className="drop-overlay">Drop to attach</div>
+        )}
       </div>
 
       <div className="composer">
+        {(attachments.length > 0 || uploading.size > 0) && (
+          <div className="composer-attachments">
+            {attachments.map((a) => (
+              <div key={a.localId} className="attachment-chip">
+                <span className="attachment-icon">
+                  {a.mimeType.startsWith("image/") ? "🖼️" : "📎"}
+                </span>
+                <span className="attachment-name" title={a.filename}>{a.filename}</span>
+                <span className="attachment-size">{formatSize(a.size)}</span>
+                <button
+                  type="button"
+                  className="attachment-remove"
+                  aria-label={`Remove ${a.filename}`}
+                  onClick={() => removeAttachment(a.localId)}
+                >✕</button>
+              </div>
+            ))}
+            {[...uploading].map((localId) => (
+              <div key={localId} className="attachment-chip attachment-uploading">
+                <span className="spinner" />
+                <span className="attachment-name">uploading…</span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="row">
+          <button
+            type="button"
+            className="composer-attach"
+            aria-label="Attach files"
+            title="Attach files"
+            disabled={status.kind !== "ready" || pending}
+            onClick={() => fileInputRef.current?.click()}
+          >＋</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              if (e.target.files?.length) void addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -363,6 +544,38 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           </button>
         </div>
       </div>
+    </>
+  );
+}
+
+/**
+ * Render bubble text with `[label](url)` links turned into clickable anchors so
+ * attachment refs show up properly. No other markdown — we don't want to
+ * over-interpret model output.
+ */
+function BubbleContent({ text }: { text: string }) {
+  const parts = useMemo(() => {
+    const out: Array<{ kind: "text" | "link"; text: string; url?: string }> = [];
+    const re = /\[([^\]]+)\]\(([^)]+)\)/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) out.push({ kind: "text", text: text.slice(last, m.index) });
+      out.push({ kind: "link", text: m[1]!, url: m[2]! });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
+    return out;
+  }, [text]);
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.kind === "link" ? (
+          <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="bubble-link">{p.text}</a>
+        ) : (
+          <span key={i}>{p.text}</span>
+        ),
+      )}
     </>
   );
 }
