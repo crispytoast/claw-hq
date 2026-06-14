@@ -2,9 +2,20 @@
 
 OpenClaw plugin that backs the [Claw HQ](../../README.md) self-hosted GUI. Loaded in-process by the user's local OpenClaw Gateway, it exposes Gateway RPC methods on the `clawhq.*` prefix that the Claw HQ web client calls through the existing tunnel — no new transport, no new auth surface.
 
-## Status — v0.0.1 scaffold (Phase B step 1)
+## Status — v0.0.2 (Phase B step 2)
 
-This is the load-only scaffold. Only `clawhq.health` is wired so we can confirm the plugin discovers + registers cleanly. The remaining surfaces below are placeholders the next sessions will fill in.
+`clawhq.health`, `clawhq.projects.list`, and `clawhq.projects.get` are wired and reading from `agents.defaults.workspace` by default. The Sidebar's Projects group renders real project rows. Remaining surfaces below are still placeholders.
+
+## Install (after the dangerous-code scan landmine)
+
+`openclaw plugins install <pnpm-workspace-path>` is blocked by the safety scan because pnpm symlinks `node_modules/openclaw` into its `.pnpm` store outside the install root. Use a clean tarball:
+
+```bash
+pnpm --filter @claw-hq/openclaw-plugin build
+( cd /home/jesse/claw-hq/apps/openclaw-plugin && rm -f *.tgz && npm pack )
+openclaw plugins install --force /home/jesse/claw-hq/apps/openclaw-plugin/claw-hq-openclaw-plugin-*.tgz
+openclaw gateway restart
+```
 
 ## Planned RPCs
 
@@ -20,14 +31,6 @@ This is the load-only scaffold. Only `clawhq.health` is wired so we can confirm 
 | `clawhq.uploads.put`         | Persist an upload (image / PDF / CSV / JSON / YAML).                          |
 | `clawhq.memory.read` / `write` | Read/write memory files via the existing OpenClaw `memory.*` RPCs.          |
 | `clawhq.events.subscribe`    | Cross-device live feed (mirror of OHQ `chats/[id]/events` SSE).               |
-
-## Install (dev)
-
-```bash
-pnpm --filter @claw-hq/openclaw-plugin build
-openclaw plugins enable clawhq --path /home/jesse/claw-hq/apps/openclaw-plugin
-openclaw gateway restart
-```
 
 ## Verify load
 

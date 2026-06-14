@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SessionSummary } from "./ChatApp.js";
 import type { User } from "../api.js";
+import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 
 export type SidebarPage =
   | "chat"
@@ -34,6 +35,21 @@ const STATIC_NAV: NavItem[] = [
   { id: "settings",  label: "Settings",  icon: "⚙️" },
 ];
 
+interface ProjectSummary {
+  id: string;
+  name: string;
+  status: string;
+  blurb: string;
+  progress: number;
+  lastUpdatedMs: number;
+}
+
+interface ProjectsListResponse {
+  projects: ProjectSummary[];
+  workspaceRoot: string | null;
+  hint?: string;
+}
+
 interface Props {
   user: User;
   page: SidebarPage;
@@ -46,6 +62,8 @@ interface Props {
   onLogout(): void | Promise<void>;
   onShowPairedDevices?(): void | Promise<void>;
   footerRight?: React.ReactNode;
+  client: GatewayClient | null;
+  status: ConnectionStatus;
 }
 
 export function Sidebar({
@@ -60,12 +78,43 @@ export function Sidebar({
   onLogout,
   onShowPairedDevices,
   footerRight,
+  client,
+  status,
 }: Props) {
   // OHQ pattern: the group that matches the current page starts expanded.
   const [sessionsOpen, setSessionsOpen] = useState(page === "chat" || page === "sessions");
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | string>("all");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [projectsErr, setProjectsErr] = useState<string | null>(null);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+
+  const loadProjects = useCallback(async () => {
+    if (!client || status.kind !== "ready") return;
+    setProjectsLoading(true);
+    setProjectsErr(null);
+    try {
+      const data = await client.call<ProjectsListResponse>(
+        "clawhq.projects.list",
+        {},
+      );
+      setProjects(data.projects ?? []);
+      if (data.hint) setProjectsErr(data.hint);
+    } catch (err) {
+      setProjectsErr(err instanceof Error ? err.message : String(err));
+      setProjects([]);
+    } finally {
+      setProjectsLoading(false);
+    }
+  }, [client, status.kind]);
+
+  // Lazy: fetch on first expand. Re-fetch on subsequent expands so the list
+  // stays fresh after Phase B step N writes (chat append, task toggle, etc.).
+  useEffect(() => {
+    if (!projectsOpen) return;
+    void loadProjects();
+  }, [projectsOpen, loadProjects]);
 
   useEffect(() => {
     if (page === "chat" || page === "sessions") setSessionsOpen(true);
@@ -238,7 +287,42 @@ export function Sidebar({
             </button>
             <div className={`cl-group-body ${projectsOpen ? "cl-expanded" : ""}`}>
               <div className="cl-group-inner">
-                <div className="cl-list-empty">No projects yet.</div>
+                {projectsLoading && projects === null ? (
+                  <div className="cl-list-empty">Loading projects…</div>
+                ) : projects && projects.length > 0 ? (
+                  <div className="cl-list">
+                    {projects.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="cl-row"
+                        title={p.blurb || p.name}
+                        onClick={onMobileClose}
+                      >
+                        <div className="cl-row-main">
+                          <span className="cl-row-title">{p.name}</span>
+                        </div>
+                        <div className="cl-row-meta">
+                          <span className={`cl-row-tag cl-status-${p.status.toLowerCase()}`}>
+                            {p.status}
+                          </span>
+                          {p.progress > 0 && (
+                            <>
+                              <span>·</span>
+                              <span>{p.progress}%</span>
+                            </>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : projectsErr ? (
+                  <div className="cl-list-empty" title={projectsErr}>
+                    {projectsErr.length > 60 ? `${projectsErr.slice(0, 57)}…` : projectsErr}
+                  </div>
+                ) : (
+                  <div className="cl-list-empty">No projects yet.</div>
+                )}
               </div>
             </div>
           </div>

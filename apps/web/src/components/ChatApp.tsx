@@ -205,6 +205,8 @@ export function ChatApp({ user, onLogout }: Props) {
         onMobileClose={() => setMobileOpen(false)}
         onLogout={onLogout}
         onShowPairedDevices={handleShowPairedDevices}
+        client={clientRef.current}
+        status={status}
         footerRight={
           <span className={`status-pill ${pill.cls}`}>
             <span className="status-dot" />

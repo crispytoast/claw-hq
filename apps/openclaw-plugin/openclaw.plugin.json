@@ -2,7 +2,7 @@
   "id": "clawhq",
   "name": "Claw HQ",
   "description": "Backend plugin for the Claw HQ self-hosted GUI — project-scoped chats, sub-project task toggles, file uploads, cross-device live feed.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "activation": {
     "onStartup": true
   },
