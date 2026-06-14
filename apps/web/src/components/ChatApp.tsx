@@ -68,6 +68,44 @@ export function ChatApp({ user, onLogout }: Props) {
     };
   }, []);
 
+  // Deep-link routing on mount. The Android side appends the FCM data
+  // payload's `deepLink` to the relay URL (e.g. /chat/agent:main:foo or
+  // /approvals); we read window.location.pathname and route once, then
+  // reset the URL back to "/" so future reloads don't keep replaying it.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const path = window.location.pathname;
+    if (!path || path === "/" || path === "") return;
+    let consumed = false;
+    const navOnly: Record<string, PageKey> = {
+      "/approvals": "approvals",
+      "/skills": "skills",
+      "/models": "models",
+      "/mcps": "mcps",
+      "/channels": "channels",
+      "/cron": "cron",
+      "/doctor": "doctor",
+      "/rpc": "rpc",
+      "/sessions": "sessions",
+      "/subprojects": "subprojects",
+    };
+    if (navOnly[path]) {
+      setPage(navOnly[path]!);
+      consumed = true;
+    } else {
+      // /chat/<sessionKey> — set active session, land on chat surface.
+      const chat = path.match(/^\/chat\/(.+)$/);
+      if (chat && chat[1]) {
+        setActiveKey(decodeURIComponent(chat[1]));
+        setPage("chat");
+        consumed = true;
+      }
+    }
+    if (consumed) {
+      try { window.history.replaceState(null, "", "/"); } catch { /* noop */ }
+    }
+  }, []);
+
   // Refresh sessions when the gateway becomes ready.
   useEffect(() => {
     if (status.kind !== "ready" || !clientRef.current) return;

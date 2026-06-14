@@ -3,6 +3,7 @@ package app.clawhq
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -53,11 +54,36 @@ class MainActivity : Activity() {
         if (relay == null) {
             setContentView(buildSetupView())
         } else {
-            renderWebView(relay)
+            renderWebView(relay, extractDeepLink(intent))
         }
     }
 
-    private fun renderWebView(relayUrl: String) {
+    /**
+     * When the OS hands the launcher activity a notification's PendingIntent
+     * extras (or FCM ships a data-only payload that the system tray restores
+     * into our launch intent), the deepLink we attached server-side rides as
+     * `notif_deepLink`. Treat any value that looks like a path (`/foo`).
+     */
+    private fun extractDeepLink(intent: Intent?): String? {
+        val dl = intent?.getStringExtra("notif_deepLink")?.trim().orEmpty()
+        if (dl.isEmpty()) return null
+        // Only accept relative paths starting with /. Drops absolute URLs that
+        // could escape the relay origin.
+        if (!dl.startsWith("/")) return null
+        return dl
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val dl = extractDeepLink(intent) ?: return
+        val relay = RelayConfig.relayUrl(this) ?: return
+        // WebView may not exist yet if the activity was just recreated; the
+        // onCreate path will pick the deepLink up via extractDeepLink(intent).
+        webView?.loadUrl("$relay$dl") ?: renderWebView(relay, dl)
+    }
+
+    private fun renderWebView(relayUrl: String, initialDeepLink: String? = null) {
         val wv = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -80,7 +106,8 @@ class MainActivity : Activity() {
         voiceBridge = bridge
         wv.addJavascriptInterface(bridge, "ClawHqVoiceBridge")
         setContentView(wv)
-        wv.loadUrl(relayUrl)
+        val initialUrl = if (initialDeepLink != null) "$relayUrl$initialDeepLink" else relayUrl
+        wv.loadUrl(initialUrl)
     }
 
     private fun buildSetupView(): View {
