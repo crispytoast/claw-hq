@@ -36,6 +36,7 @@ class MainActivity : Activity() {
 
     private var webView: WebView? = null
     private var voiceBridge: VoiceBridge? = null
+    private var updaterBridge: UpdaterBridge? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,6 +106,11 @@ class MainActivity : Activity() {
         val bridge = VoiceBridge(this, wv)
         voiceBridge = bridge
         wv.addJavascriptInterface(bridge, "ClawHqVoiceBridge")
+        // window.ClawHqUpdater — Settings → Updates calls into this to
+        // download + install the latest APK from /install/apk.
+        val updater = UpdaterBridge(this, wv)
+        updaterBridge = updater
+        wv.addJavascriptInterface(updater, "ClawHqUpdater")
         setContentView(wv)
         val initialUrl = if (initialDeepLink != null) "$relayUrl$initialDeepLink" else relayUrl
         wv.loadUrl(initialUrl)

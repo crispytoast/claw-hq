@@ -11,8 +11,8 @@ android {
         applicationId = "app.clawhq"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.4.5"
+        versionCode = 7
+        versionName = "0.4.6"
     }
 
     buildTypes {
@@ -45,6 +45,10 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.webkit:webkit:1.11.0")
+    // FileProvider for step 22's APK self-update path. core-ktx pulls
+    // androidx.core which already exports FileProvider, but keep this explicit
+    // so a future core-ktx demotion can't silently break the install flow.
+    implementation("androidx.core:core:1.13.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     // Firebase: programmatic init from /api/push/init, no google-services plugin.

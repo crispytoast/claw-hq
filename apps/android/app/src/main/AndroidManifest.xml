@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Step 22 — in-app APK self-update via PackageInstaller.
+         Android 8+ requires this permission to launch the install flow. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Step 18: voice STT uses SpeechRecognizer, which on most devices is
          backed by Google's on-device recognizer. The manifest needs to declare
@@ -37,6 +40,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Step 22: FileProvider hands the downloaded APK to PackageInstaller
+             via a content:// URI (file:// URIs are rejected by Android 7+).
+             authority is namespaced under the applicationId to avoid clashing
+             with other apps' providers. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths" />
+        </provider>
 
         <service
             android:name=".ClawHqMessagingService"

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Step 22 — FileProvider path config. Only exposes the app's internal cache
+     dir under the "updates" subdir, where downloaded APKs land for install. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>
