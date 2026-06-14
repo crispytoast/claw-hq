@@ -100,6 +100,14 @@ export function openDb(path: string): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
   `);
+  // Seed a synthetic "owner" user so trusted-lan and shared-secret modes
+  // (which share the literal id "owner") satisfy the pairing_tokens and
+  // push_devices foreign keys. Real-auth installs ignore this row — those
+  // users carry randomUUID() ids.
+  db.prepare(
+    `INSERT OR IGNORE INTO users (id, email, display_name, password_hash, created_at)
+     VALUES ('owner', 'owner@local', 'Owner', '', ?)`,
+  ).run(Date.now());
   dbInstance = db;
   return db;
 }

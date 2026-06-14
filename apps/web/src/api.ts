@@ -25,10 +25,16 @@ interface IssuedPairingToken {
 }
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Only declare a JSON content-type when there's a body. Fastify rejects
+  // empty-body requests with application/json (DELETE /api/pairing/tokens/:t
+  // would 400 otherwise — caught by phaseC16-pairing-ui-test).
+  const headers = init.body
+    ? { "Content-Type": "application/json", ...(init.headers ?? {}) }
+    : { ...(init.headers ?? {}) };
   const res = await fetch(path, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
     ...init,
+    headers,
   });
   if (!res.ok) {
     let body: unknown;

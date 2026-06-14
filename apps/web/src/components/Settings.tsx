@@ -4,23 +4,26 @@ import { SettingsOpenClawTab } from "./settings/SettingsOpenClawTab.js";
 import { SettingsUpdatesTab } from "./settings/SettingsUpdatesTab.js";
 import { SettingsNotificationsTab } from "./settings/SettingsNotificationsTab.js";
 import { SettingsAboutTab } from "./settings/SettingsAboutTab.js";
+import { SettingsPairingTab } from "./settings/SettingsPairingTab.js";
+
+export type SettingsTab = "openclaw" | "pairing" | "notifications" | "updates" | "about";
 
 interface Props {
   user: User;
   onClose(): void;
+  initialTab?: SettingsTab;
 }
 
-type TabKey = "openclaw" | "notifications" | "updates" | "about";
-
-const TABS: Array<{ key: TabKey; label: string }> = [
+const TABS: Array<{ key: SettingsTab; label: string }> = [
   { key: "openclaw", label: "OpenClaw" },
+  { key: "pairing", label: "Pairing" },
   { key: "notifications", label: "Notifications" },
   { key: "updates", label: "Updates" },
   { key: "about", label: "About" },
 ];
 
-export function Settings({ user, onClose }: Props) {
-  const [tab, setTab] = useState<TabKey>("openclaw");
+export function Settings({ user, onClose, initialTab }: Props) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab ?? "openclaw");
 
   return (
     <div className="settings-shell">
@@ -44,6 +47,7 @@ export function Settings({ user, onClose }: Props) {
 
       <div className="settings-body">
         {tab === "openclaw" && <SettingsOpenClawTab />}
+        {tab === "pairing" && <SettingsPairingTab />}
         {tab === "notifications" && <SettingsNotificationsTab />}
         {tab === "updates" && <SettingsUpdatesTab />}
         {tab === "about" && <SettingsAboutTab user={user} />}

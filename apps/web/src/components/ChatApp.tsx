@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type User } from "../api.js";
+import { type User } from "../api.js";
 import { GatewayClient, defaultGatewayUrl, type ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { ChatPane } from "./ChatPane.js";
@@ -8,7 +8,7 @@ import { ProjectPage } from "./pages/ProjectPage.js";
 import { MemoryEditorPage } from "./pages/MemoryEditorPage.js";
 import { SubprojectsPage } from "./pages/SubprojectsPage.js";
 import { CronPage } from "./pages/CronPage.js";
-import { Settings } from "./Settings.js";
+import { Settings, type SettingsTab } from "./Settings.js";
 import { NotificationsInbox } from "./NotificationsInbox.js";
 import { Sidebar, type SidebarPage } from "./Sidebar.js";
 import { systemApi } from "../system-api.js";
@@ -51,6 +51,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [activeWorkspaceMemory, setActiveWorkspaceMemory] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [showInbox, setShowInbox] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
@@ -195,16 +196,13 @@ export function ChatApp({ user, onLogout }: Props) {
   }, [activeChatId]);
 
   const handleSelectPage = useCallback((next: SidebarPage) => {
-    if (next === "settings") { setShowSettings(true); return; }
+    if (next === "settings") { setSettingsTab(undefined); setShowSettings(true); return; }
     setPage(next);
   }, []);
 
-  const handleShowPairedDevices = useCallback(async () => {
-    const tokens = await api.listPairingTokens();
-    const lines = tokens
-      .map((t) => `• ${t.label} — last used ${t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}`)
-      .join("\n");
-    alert(`Paired devices:\n${lines || "(none)"}`);
+  const handleShowPairedDevices = useCallback(() => {
+    setSettingsTab("pairing");
+    setShowSettings(true);
   }, []);
 
   // Poll unread count every 20s so the bell badge stays roughly fresh.
@@ -260,7 +258,13 @@ export function ChatApp({ user, onLogout }: Props) {
   const pill = useMemo(() => statusPill(status), [status]);
 
   if (showSettings) {
-    return <Settings user={user} onClose={() => setShowSettings(false)} />;
+    return (
+      <Settings
+        user={user}
+        onClose={() => setShowSettings(false)}
+        initialTab={settingsTab}
+      />
+    );
   }
 
   if (showInbox) {
