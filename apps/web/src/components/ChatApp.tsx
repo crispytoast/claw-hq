@@ -3,6 +3,7 @@ import { api, type User } from "../api.js";
 import { GatewayClient, defaultGatewayUrl, type ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { ChatPane } from "./ChatPane.js";
+import { ChatDetailView } from "./ChatDetailView.js";
 import { Settings } from "./Settings.js";
 import { NotificationsInbox } from "./NotificationsInbox.js";
 import { Sidebar, type SidebarPage } from "./Sidebar.js";
@@ -36,6 +37,8 @@ export function ChatApp({ user, onLogout }: Props) {
   const [status, setStatus] = useState<ConnectionStatus>({ kind: "connecting" });
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [activeChatProject, setActiveChatProject] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
@@ -111,6 +114,14 @@ export function ChatApp({ user, onLogout }: Props) {
   // the mobile-close so we don't need to mirror that state here.
   const handlePickSession = useCallback((key: string) => {
     setActiveKey(key);
+    setActiveChatId(null);
+    setActiveChatProject(null);
+    setPage("chat");
+  }, []);
+
+  const handlePickChat = useCallback((chatId: string, projectSlug: string | null) => {
+    setActiveChatId(chatId);
+    setActiveChatProject(projectSlug);
     setPage("chat");
   }, []);
 
@@ -201,6 +212,8 @@ export function ChatApp({ user, onLogout }: Props) {
         sessions={sessions}
         activeSessionKey={activeKey}
         onPickSession={handlePickSession}
+        activeChatId={activeChatId}
+        onPickChat={handlePickChat}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onLogout={onLogout}
@@ -224,19 +237,35 @@ export function ChatApp({ user, onLogout }: Props) {
             onClick={() => setMobileOpen(true)}
           >☰</button>
           <div style={{ flex: 1, minWidth: 0, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {page === "chat" ? (activeSession?.label ?? "No session") : null}
+            {page === "chat"
+              ? (activeChatId
+                  ? (activeChatProject ? `${activeChatProject} · chat` : "Chat")
+                  : (activeSession?.label ?? "No session"))
+              : null}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>{toolbar}</div>
         </div>
 
         {page === "chat" && (
-          clientRef.current && activeKey ? (
-            <ChatPane
-              key={activeKey}
-              client={clientRef.current}
-              sessionKey={activeKey}
-              status={status}
-            />
+          clientRef.current ? (
+            activeChatId ? (
+              <ChatDetailView
+                key={activeChatId}
+                client={clientRef.current}
+                chatId={activeChatId}
+                projectSlug={activeChatProject}
+                status={status}
+              />
+            ) : activeKey ? (
+              <ChatPane
+                key={activeKey}
+                client={clientRef.current}
+                sessionKey={activeKey}
+                status={status}
+              />
+            ) : (
+              <div className="empty"><div className="big">⏳</div>Waiting for session…</div>
+            )
           ) : (
             <div className="empty"><div className="big">⏳</div>Waiting for session…</div>
           )
@@ -245,7 +274,7 @@ export function ChatApp({ user, onLogout }: Props) {
           <SessionsPage
             client={clientRef.current}
             status={status}
-            onOpenSession={(k) => { setActiveKey(k); setPage("chat"); }}
+            onOpenSession={(k) => { setActiveKey(k); setActiveChatId(null); setActiveChatProject(null); setPage("chat"); }}
           />
         )}
         {page === "channels" && <ChannelsPage client={clientRef.current} status={status} />}

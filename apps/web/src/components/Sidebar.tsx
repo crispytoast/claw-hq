@@ -74,6 +74,8 @@ interface Props {
   sessions: SessionSummary[];
   activeSessionKey: string | null;
   onPickSession(key: string): void;
+  activeChatId: string | null;
+  onPickChat(chatId: string, projectSlug: string | null): void;
   mobileOpen: boolean;
   onMobileClose(): void;
   onLogout(): void | Promise<void>;
@@ -90,6 +92,8 @@ export function Sidebar({
   sessions,
   activeSessionKey,
   onPickSession,
+  activeChatId,
+  onPickChat,
   mobileOpen,
   onMobileClose,
   onLogout,
@@ -191,6 +195,8 @@ export function Sidebar({
         const existing = m.get(projectId) ?? [];
         return new Map(m).set(projectId, [data.chat, ...existing]);
       });
+      onPickChat(data.chat.id, projectId);
+      onMobileClose();
     } catch (err) {
       setProjectChatsErr((m) =>
         new Map(m).set(projectId, err instanceof Error ? err.message : String(err)),
@@ -417,24 +423,30 @@ export function Sidebar({
                               {chatsLoading && !chats ? (
                                 <div className="cl-list-empty">Loading chats…</div>
                               ) : chats && chats.length > 0 ? (
-                                chats.map((c) => (
-                                  <button
-                                    key={c.id}
-                                    type="button"
-                                    className="cl-row cl-chat-row"
-                                    title={c.title}
-                                    onClick={onMobileClose}
-                                  >
-                                    <div className="cl-row-main">
-                                      <span className="cl-row-title">{c.title}</span>
-                                    </div>
-                                    <div className="cl-row-meta">
-                                      <span>{c.messageCount} msg</span>
-                                      <span>·</span>
-                                      <span>{relativeTime(c.updatedMs)}</span>
-                                    </div>
-                                  </button>
-                                ))
+                                chats.map((c) => {
+                                  const isChatActive = activeChatId === c.id;
+                                  return (
+                                    <button
+                                      key={c.id}
+                                      type="button"
+                                      className={`cl-row cl-chat-row ${isChatActive ? "cl-active" : ""}`}
+                                      title={c.title}
+                                      onClick={() => {
+                                        onPickChat(c.id, c.projectSlug);
+                                        onMobileClose();
+                                      }}
+                                    >
+                                      <div className="cl-row-main">
+                                        <span className="cl-row-title">{c.title}</span>
+                                      </div>
+                                      <div className="cl-row-meta">
+                                        <span>{c.messageCount} msg</span>
+                                        <span>·</span>
+                                        <span>{relativeTime(c.updatedMs)}</span>
+                                      </div>
+                                    </button>
+                                  );
+                                })
                               ) : chatsErr ? (
                                 <div className="cl-list-empty" title={chatsErr}>
                                   {chatsErr.length > 60 ? `${chatsErr.slice(0, 57)}…` : chatsErr}
