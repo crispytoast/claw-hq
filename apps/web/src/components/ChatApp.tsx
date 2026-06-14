@@ -7,6 +7,7 @@ import { ChatDetailView } from "./ChatDetailView.js";
 import { ProjectPage } from "./pages/ProjectPage.js";
 import { MemoryEditorPage } from "./pages/MemoryEditorPage.js";
 import { SubprojectsPage } from "./pages/SubprojectsPage.js";
+import { CronPage } from "./pages/CronPage.js";
 import { Settings } from "./Settings.js";
 import { NotificationsInbox } from "./NotificationsInbox.js";
 import { Sidebar, type SidebarPage } from "./Sidebar.js";
@@ -367,6 +368,7 @@ export function ChatApp({ user, onLogout }: Props) {
         {page === "skills" && <SkillsPage client={clientRef.current} status={status} />}
         {page === "models" && <ModelsPage client={clientRef.current} status={status} />}
         {page === "approvals" && <ApprovalsPage client={clientRef.current} status={status} />}
+        {page === "cron" && <CronPage client={clientRef.current} status={status} />}
         {page === "doctor" && <DoctorPage client={clientRef.current} status={status} />}
         {page === "rpc" && <RpcConsolePage client={clientRef.current} status={status} />}
       </main>
