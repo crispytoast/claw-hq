@@ -25,14 +25,20 @@ if ! tailscale status >/dev/null 2>&1; then
 fi
 
 # Tailscale Serve needs either root or the operator flag pointed at $USER.
-# This is the only sudo step.
-if ! tailscale serve status >/dev/null 2>&1; then
-  echo "Granting tailscale Serve permission to $USER (one-time, requires sudo)..."
-  sudo tailscale set --operator="$USER"
-fi
-
+# `tailscale serve status` returns 0 even without operator (it just shows
+# "No serve config"), so probe the actual permission by attempting the
+# real serve command and catching "Access denied".
 echo "Enabling tailscale serve for http://localhost:${PORT} ..."
-tailscale serve --bg "http://localhost:${PORT}"
+SERVE_OUTPUT="$(tailscale serve --bg "http://localhost:${PORT}" 2>&1 || true)"
+if grep -q "Access denied" <<<"$SERVE_OUTPUT"; then
+  echo "Operator permission missing. Setting it (one-time, requires sudo)..."
+  sudo tailscale set --operator="$USER"
+  # Retry now that the operator is set.
+  tailscale serve --bg "http://localhost:${PORT}"
+elif [[ -n "$SERVE_OUTPUT" ]]; then
+  # Surface any non-empty output from the first try (typically success info).
+  echo "$SERVE_OUTPUT"
+fi
 
 echo
 echo "Done. New HTTPS URL:"
