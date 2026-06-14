@@ -1277,6 +1277,18 @@ a:hover { text-decoration: underline; }
 }
 .attachment-uploading { color: var(--muted-foreground); }
 .attachment-icon { font-size: 0.95rem; }
+.attachment-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--bg-elev1);
+  flex-shrink: 0;
+  display: block;
+}
+.attachment-chip:has(.attachment-thumb) {
+  padding-left: 4px;
+}
 .attachment-name {
   overflow: hidden;
   text-overflow: ellipsis;

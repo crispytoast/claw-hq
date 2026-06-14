@@ -13,6 +13,8 @@ interface UploadedAttachment {
   size: number;
   /** Kept so we can re-read bytes as base64 for chat.send. */
   file: File;
+  /** Local blob: URL for image previews. Revoke when the chip is removed. */
+  previewUrl?: string;
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -207,6 +209,12 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         setUploading((s) => new Set(s).add(localId));
         try {
           const res = await uploadFile(file);
+          const isImage = res.mimeType.startsWith("image/");
+          let previewUrl: string | undefined;
+          if (isImage) {
+            previewUrl = URL.createObjectURL(file);
+            previewUrlsRef.current.add(previewUrl);
+          }
           const next: UploadedAttachment = {
             localId,
             uploadId: res.id,
@@ -215,6 +223,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             mimeType: res.mimeType,
             size: res.size,
             file,
+            previewUrl,
           };
           setAttachments((prev) => [...prev, next]);
         } catch (e) {
@@ -231,8 +240,31 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     [],
   );
 
-  const removeAttachment = useCallback((localId: string) => {
-    setAttachments((prev) => prev.filter((a) => a.localId !== localId));
+  // Track all blob: URLs we've created so we can revoke on unmount without
+  // chasing the latest `attachments` snapshot from a stale closure.
+  const previewUrlsRef = useRef<Set<string>>(new Set());
+  const revokePreviewUrl = useCallback((url: string | undefined) => {
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    previewUrlsRef.current.delete(url);
+  }, []);
+
+  const removeAttachment = useCallback(
+    (localId: string) => {
+      setAttachments((prev) => {
+        const target = prev.find((a) => a.localId === localId);
+        revokePreviewUrl(target?.previewUrl);
+        return prev.filter((a) => a.localId !== localId);
+      });
+    },
+    [revokePreviewUrl],
+  );
+
+  useEffect(() => {
+    return () => {
+      for (const url of previewUrlsRef.current) URL.revokeObjectURL(url);
+      previewUrlsRef.current.clear();
+    };
   }, []);
 
   // Track whether we've consumed the initial search query for THIS chat load.
@@ -489,6 +521,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     setInput("");
     setErr("");
     setPending(true);
+    for (const a of pendingAttachments) revokePreviewUrl(a.previewUrl);
     setAttachments([]);
 
     // Build the persisted body — annotate each attachment with an inline link so
@@ -554,7 +587,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       ]);
       setPending(false);
     }
-  }, [client, chatId, projectSlug, sessionKey, input, attachments, status.kind, pending, noteOwnPersist]);
+  }, [client, chatId, projectSlug, sessionKey, input, attachments, status.kind, pending, noteOwnPersist, revokePreviewUrl]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -630,7 +663,23 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           <div className="composer-attachments">
             {attachments.map((a) => (
               <div key={a.localId} className="attachment-chip">
-                <span className="attachment-icon">
+                {a.previewUrl ? (
+                  <img
+                    src={a.previewUrl}
+                    alt={a.filename}
+                    className="attachment-thumb"
+                    onError={(e) => {
+                      // If the blob URL can't decode, fall back to the icon.
+                      e.currentTarget.style.display = "none";
+                      const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                      if (fallback) fallback.style.display = "";
+                    }}
+                  />
+                ) : null}
+                <span
+                  className="attachment-icon"
+                  style={{ display: a.previewUrl ? "none" : undefined }}
+                >
                   {a.mimeType.startsWith("image/") ? "🖼️" : "📎"}
                 </span>
                 <span className="attachment-name" title={a.filename}>{a.filename}</span>
