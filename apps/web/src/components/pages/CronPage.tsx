@@ -84,6 +84,51 @@ interface Props {
   status: ConnectionStatus;
 }
 
+interface EditDraft {
+  /** When null, this is a new-job draft. */
+  id: string | null;
+  name: string;
+  cron: string;
+  message: string;
+  enabled: boolean;
+}
+
+const EMPTY_DRAFT: EditDraft = {
+  id: null,
+  name: "",
+  cron: "",
+  message: "",
+  enabled: true,
+};
+
+function buildAddParams(d: EditDraft): Record<string, unknown> {
+  // We default to isolated sessions because they accept a plain message field.
+  // Main-session jobs need a systemEvent payload — left for a future toggle.
+  return {
+    name: d.name,
+    cron: d.cron,
+    session: "isolated",
+    message: d.message,
+    kind: "message",
+    enabled: d.enabled,
+  };
+}
+
+function buildUpdateParams(d: EditDraft): Record<string, unknown> {
+  if (!d.id) throw new Error("update requires id");
+  // The validator wants `{jobId, patch: {...}}` — not flat fields. Confirmed
+  // via the C21 wire probe.
+  return {
+    jobId: d.id,
+    patch: {
+      name: d.name,
+      cron: d.cron,
+      message: d.message,
+      enabled: d.enabled,
+    },
+  };
+}
+
 export function CronPage({ client, status }: Props) {
   const [jobs, setJobs] = useState<CronJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +137,9 @@ export function CronPage({ client, status }: Props) {
   const [recentRuns, setRecentRuns] = useState<Map<string, CronRun[]>>(new Map());
   const [pendingActionFor, setPendingActionFor] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [editing, setEditing] = useState<EditDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [editErr, setEditErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!client || status.kind !== "ready") return;
@@ -151,6 +199,50 @@ export function CronPage({ client, status }: Props) {
     [client, status.kind, expanded, loadRuns],
   );
 
+  const startNew = useCallback(() => {
+    setEditing({ ...EMPTY_DRAFT });
+    setEditErr(null);
+  }, []);
+
+  const startEdit = useCallback((j: CronJob) => {
+    const id = j.id ?? null;
+    if (!id) return;
+    setEditing({
+      id,
+      name: j.title || j.name || "",
+      cron: j.cron || j.schedule || "",
+      message: j.message || j.prompt || "",
+      enabled: j.enabled !== false,
+    });
+    setEditErr(null);
+  }, []);
+
+  const saveDraft = useCallback(async () => {
+    if (!client || status.kind !== "ready" || !editing) return;
+    const d = editing;
+    if (!d.name.trim() || !d.cron.trim() || !d.message.trim()) {
+      setEditErr("name, cron expression, and message are all required");
+      return;
+    }
+    setSaving(true);
+    setEditErr(null);
+    try {
+      if (d.id) {
+        await client.call("cron.update", buildUpdateParams(d));
+        setActionMsg(`Updated ${d.name}`);
+      } else {
+        await client.call("cron.add", buildAddParams(d));
+        setActionMsg(`Created ${d.name}`);
+      }
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setEditErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [client, status.kind, editing, load]);
+
   const remove = useCallback(
     async (jobId: string, label: string) => {
       if (!client || status.kind !== "ready") return;
@@ -175,21 +267,95 @@ export function CronPage({ client, status }: Props) {
       title="Cron"
       subtitle={`Scheduled Gateway jobs${jobs ? ` · ${jobs.length}` : ""}`}
       actions={
-        <button className="btn-ghost" onClick={() => void load()} disabled={loading}>
-          Refresh
-        </button>
+        <>
+          <button className="btn-primary" onClick={startNew} disabled={editing !== null || loading}>
+            + New job
+          </button>
+          <button className="btn-ghost" onClick={() => void load()} disabled={loading}>
+            Refresh
+          </button>
+        </>
       }
     >
+      {editing && (
+        <div className="cron-edit-card">
+          <div className="cron-edit-title">{editing.id ? "Edit job" : "New cron job"}</div>
+          <div className="cron-edit-fields">
+            <label>
+              <span>Name</span>
+              <input
+                type="text"
+                value={editing.name}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                placeholder="Morning brief"
+                disabled={saving}
+                autoFocus
+              />
+            </label>
+            <label>
+              <span>Cron expression</span>
+              <input
+                type="text"
+                value={editing.cron}
+                onChange={(e) => setEditing({ ...editing, cron: e.target.value })}
+                placeholder="0 7 * * *"
+                disabled={saving}
+                style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+              />
+            </label>
+            <label>
+              <span>Message / prompt</span>
+              <textarea
+                value={editing.message}
+                onChange={(e) => setEditing({ ...editing, message: e.target.value })}
+                placeholder="Summarize overnight updates."
+                rows={3}
+                disabled={saving}
+              />
+            </label>
+            <label className="cron-edit-check">
+              <input
+                type="checkbox"
+                checked={editing.enabled}
+                onChange={(e) => setEditing({ ...editing, enabled: e.target.checked })}
+                disabled={saving}
+              />
+              <span>Enabled</span>
+            </label>
+          </div>
+          {editing.id == null && (
+            <p className="cron-edit-note">
+              Runs in an isolated session. Main-session systemEvent injections aren't
+              wired yet — use the openclaw CLI for those.
+            </p>
+          )}
+          {editErr && <div className="alert error">{editErr}</div>}
+          <div className="cron-edit-actions">
+            <button
+              className="btn-primary"
+              onClick={() => void saveDraft()}
+              disabled={saving}
+            >
+              {saving ? <span className="spinner" /> : editing.id ? "Save" : "Create"}
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={() => { setEditing(null); setEditErr(null); }}
+              disabled={saving}
+            >Cancel</button>
+          </div>
+        </div>
+      )}
       {actionMsg && <div className="alert">{actionMsg}</div>}
       {error && <div className="alert error">{error}</div>}
       {loading && jobs === null && (
         <div className="empty"><div className="spinner" />Loading…</div>
       )}
-      {jobs && jobs.length === 0 && !loading && !error && (
+      {jobs && jobs.length === 0 && !loading && !error && !editing && (
         <div className="empty">
           <div className="big">⏰</div>
-          No cron jobs configured. Use `openclaw cron add` from the CLI to create one;
-          this page will pick it up.
+          No cron jobs configured. Tap <strong>+ New job</strong> above to create one,
+          or use <code>openclaw cron add</code> from the CLI.
         </div>
       )}
       {jobs && jobs.length > 0 && (
@@ -236,6 +402,11 @@ export function CronPage({ client, status }: Props) {
                           onClick={() => void runNow(jobId)}
                           disabled={isPending}
                         >Run now</button>
+                        <button
+                          className="btn-ghost"
+                          onClick={() => startEdit(j)}
+                          disabled={isPending}
+                        >Edit</button>
                         <button
                           className="btn-ghost"
                           onClick={() => void remove(jobId, jobLabel(j))}
