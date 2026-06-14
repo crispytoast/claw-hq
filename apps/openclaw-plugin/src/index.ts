@@ -1,9 +1,17 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import {
+  appendMessage,
+  createChat,
+  deleteChat,
+  getChatHistory,
+  listChats,
+  type ChatRole,
+} from "./chats.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.2";
+const PLUGIN_VERSION = "0.0.3";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -267,6 +275,11 @@ export default definePluginEntry({
             "clawhq.health",
             "clawhq.projects.list",
             "clawhq.projects.get",
+            "clawhq.chats.list",
+            "clawhq.chats.create",
+            "clawhq.chats.history",
+            "clawhq.chats.append",
+            "clawhq.chats.delete",
           ],
         });
       },
@@ -321,6 +334,166 @@ export default definePluginEntry({
         }
       },
       { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.chats.list",
+      async ({ respond, params }) => {
+        try {
+          const p = (params ?? {}) as { projectSlug?: unknown };
+          const projectSlug =
+            typeof p.projectSlug === "string" ? p.projectSlug : undefined;
+          const chats = await listChats(projectSlug);
+          respond(true, { chats });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.chats.create",
+      async ({ respond, params }) => {
+        try {
+          const p = (params ?? {}) as {
+            projectSlug?: unknown;
+            title?: unknown;
+          };
+          const projectSlug =
+            typeof p.projectSlug === "string" ? p.projectSlug : null;
+          const title = typeof p.title === "string" ? p.title : undefined;
+          const chat = await createChat({ projectSlug, title });
+          respond(true, { chat });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.chats.history",
+      async ({ respond, params }) => {
+        try {
+          const p = (params ?? {}) as { chatId?: unknown };
+          if (typeof p.chatId !== "string" || !p.chatId) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: chatId",
+            });
+            return;
+          }
+          const chat = await getChatHistory(p.chatId);
+          if (!chat) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no chat: ${p.chatId}`,
+            });
+            return;
+          }
+          respond(true, { chat });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.chats.append",
+      async ({ respond, params }) => {
+        try {
+          const p = (params ?? {}) as {
+            chatId?: unknown;
+            role?: unknown;
+            content?: unknown;
+          };
+          if (typeof p.chatId !== "string" || !p.chatId) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: chatId",
+            });
+            return;
+          }
+          if (
+            typeof p.role !== "string" ||
+            !["user", "assistant", "system"].includes(p.role)
+          ) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "role must be user|assistant|system",
+            });
+            return;
+          }
+          if (typeof p.content !== "string") {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "content must be a string",
+            });
+            return;
+          }
+          const message = await appendMessage({
+            chatId: p.chatId,
+            role: p.role as ChatRole,
+            content: p.content,
+          });
+          if (!message) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no chat: ${p.chatId}`,
+            });
+            return;
+          }
+          respond(true, { message });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.chats.delete",
+      async ({ respond, params }) => {
+        try {
+          const p = (params ?? {}) as { chatId?: unknown };
+          if (typeof p.chatId !== "string" || !p.chatId) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: chatId",
+            });
+            return;
+          }
+          const deleted = await deleteChat(p.chatId);
+          if (!deleted) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no chat: ${p.chatId}`,
+            });
+            return;
+          }
+          respond(true, { deleted: true });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.write" },
     );
   },
 });

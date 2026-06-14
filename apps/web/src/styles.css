@@ -950,6 +950,25 @@ a:hover { text-decoration: underline; }
 .cl-row-meta .cl-status-build { color: var(--accent); opacity: 1; }
 .cl-row-meta .cl-status-planning { color: var(--muted-foreground); opacity: 1; }
 
+.cl-project-block { display: flex; flex-direction: column; }
+.cl-project-chevron {
+  display: inline-block;
+  width: 14px;
+  margin-right: 4px;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+.cl-project-chats {
+  margin-left: 14px;
+  padding-left: 8px;
+  border-left: 1px solid var(--cl-sidebar-divider, rgba(255, 255, 255, 0.06));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 6px;
+}
+.cl-chat-row .cl-row-title { font-size: 0.85rem; }
+
 .cl-static-nav { padding: 0 12px; display: flex; flex-direction: column; gap: 2px; }
 .cl-nav-item {
   display: flex;

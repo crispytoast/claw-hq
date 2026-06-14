@@ -50,6 +50,23 @@ interface ProjectsListResponse {
   hint?: string;
 }
 
+interface ChatSummary {
+  id: string;
+  projectSlug: string | null;
+  title: string;
+  createdMs: number;
+  updatedMs: number;
+  messageCount: number;
+}
+
+interface ChatsListResponse {
+  chats: ChatSummary[];
+}
+
+interface ChatCreateResponse {
+  chat: ChatSummary;
+}
+
 interface Props {
   user: User;
   page: SidebarPage;
@@ -89,6 +106,10 @@ export function Sidebar({
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [projectsErr, setProjectsErr] = useState<string | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(false);
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [projectChats, setProjectChats] = useState<Map<string, ChatSummary[]>>(new Map());
+  const [projectChatsLoading, setProjectChatsLoading] = useState<Set<string>>(new Set());
+  const [projectChatsErr, setProjectChatsErr] = useState<Map<string, string>>(new Map());
 
   const loadProjects = useCallback(async () => {
     if (!client || status.kind !== "ready") return;
@@ -115,6 +136,67 @@ export function Sidebar({
     if (!projectsOpen) return;
     void loadProjects();
   }, [projectsOpen, loadProjects]);
+
+  const loadProjectChats = useCallback(
+    async (projectId: string) => {
+      if (!client || status.kind !== "ready") return;
+      setProjectChatsLoading((s) => new Set(s).add(projectId));
+      setProjectChatsErr((m) => {
+        const next = new Map(m);
+        next.delete(projectId);
+        return next;
+      });
+      try {
+        const data = await client.call<ChatsListResponse>(
+          "clawhq.chats.list",
+          { projectSlug: projectId },
+        );
+        setProjectChats((m) => new Map(m).set(projectId, data.chats ?? []));
+      } catch (err) {
+        setProjectChatsErr((m) =>
+          new Map(m).set(projectId, err instanceof Error ? err.message : String(err)),
+        );
+      } finally {
+        setProjectChatsLoading((s) => {
+          const next = new Set(s);
+          next.delete(projectId);
+          return next;
+        });
+      }
+    },
+    [client, status.kind],
+  );
+
+  function toggleProject(projectId: string) {
+    setExpandedProjects((s) => {
+      const next = new Set(s);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+        if (!projectChats.has(projectId)) void loadProjectChats(projectId);
+      }
+      return next;
+    });
+  }
+
+  async function createProjectChat(projectId: string) {
+    if (!client || status.kind !== "ready") return;
+    try {
+      const data = await client.call<ChatCreateResponse>(
+        "clawhq.chats.create",
+        { projectSlug: projectId, title: "New chat" },
+      );
+      setProjectChats((m) => {
+        const existing = m.get(projectId) ?? [];
+        return new Map(m).set(projectId, [data.chat, ...existing]);
+      });
+    } catch (err) {
+      setProjectChatsErr((m) =>
+        new Map(m).set(projectId, err instanceof Error ? err.message : String(err)),
+      );
+    }
+  }
 
   useEffect(() => {
     if (page === "chat" || page === "sessions") setSessionsOpen(true);
@@ -291,30 +373,80 @@ export function Sidebar({
                   <div className="cl-list-empty">Loading projects…</div>
                 ) : projects && projects.length > 0 ? (
                   <div className="cl-list">
-                    {projects.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        className="cl-row"
-                        title={p.blurb || p.name}
-                        onClick={onMobileClose}
-                      >
-                        <div className="cl-row-main">
-                          <span className="cl-row-title">{p.name}</span>
-                        </div>
-                        <div className="cl-row-meta">
-                          <span className={`cl-row-tag cl-status-${p.status.toLowerCase()}`}>
-                            {p.status}
-                          </span>
-                          {p.progress > 0 && (
-                            <>
-                              <span>·</span>
-                              <span>{p.progress}%</span>
-                            </>
+                    {projects.map((p) => {
+                      const isExpanded = expandedProjects.has(p.id);
+                      const chats = projectChats.get(p.id);
+                      const chatsLoading = projectChatsLoading.has(p.id);
+                      const chatsErr = projectChatsErr.get(p.id);
+                      return (
+                        <div key={p.id} className="cl-project-block">
+                          <button
+                            type="button"
+                            className="cl-row"
+                            title={p.blurb || p.name}
+                            onClick={() => toggleProject(p.id)}
+                          >
+                            <div className="cl-row-main">
+                              <span className="cl-row-title">
+                                <span className="cl-project-chevron">{isExpanded ? "▾" : "▸"}</span>
+                                {p.name}
+                              </span>
+                            </div>
+                            <div className="cl-row-meta">
+                              <span className={`cl-row-tag cl-status-${p.status.toLowerCase()}`}>
+                                {p.status}
+                              </span>
+                              {p.progress > 0 && (
+                                <>
+                                  <span>·</span>
+                                  <span>{p.progress}%</span>
+                                </>
+                              )}
+                            </div>
+                          </button>
+                          {isExpanded && (
+                            <div className="cl-project-chats">
+                              <button
+                                type="button"
+                                className="cl-new-btn"
+                                onClick={() => void createProjectChat(p.id)}
+                              >
+                                <span>＋</span>
+                                <span>New chat</span>
+                              </button>
+                              {chatsLoading && !chats ? (
+                                <div className="cl-list-empty">Loading chats…</div>
+                              ) : chats && chats.length > 0 ? (
+                                chats.map((c) => (
+                                  <button
+                                    key={c.id}
+                                    type="button"
+                                    className="cl-row cl-chat-row"
+                                    title={c.title}
+                                    onClick={onMobileClose}
+                                  >
+                                    <div className="cl-row-main">
+                                      <span className="cl-row-title">{c.title}</span>
+                                    </div>
+                                    <div className="cl-row-meta">
+                                      <span>{c.messageCount} msg</span>
+                                      <span>·</span>
+                                      <span>{relativeTime(c.updatedMs)}</span>
+                                    </div>
+                                  </button>
+                                ))
+                              ) : chatsErr ? (
+                                <div className="cl-list-empty" title={chatsErr}>
+                                  {chatsErr.length > 60 ? `${chatsErr.slice(0, 57)}…` : chatsErr}
+                                </div>
+                              ) : (
+                                <div className="cl-list-empty">No chats yet.</div>
+                              )}
+                            </div>
                           )}
                         </div>
-                      </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : projectsErr ? (
                   <div className="cl-list-empty" title={projectsErr}>

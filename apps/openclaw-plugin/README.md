@@ -2,9 +2,9 @@
 
 OpenClaw plugin that backs the [Claw HQ](../../README.md) self-hosted GUI. Loaded in-process by the user's local OpenClaw Gateway, it exposes Gateway RPC methods on the `clawhq.*` prefix that the Claw HQ web client calls through the existing tunnel — no new transport, no new auth surface.
 
-## Status — v0.0.2 (Phase B step 2)
+## Status — v0.0.3 (Phase B step 3)
 
-`clawhq.health`, `clawhq.projects.list`, and `clawhq.projects.get` are wired and reading from `agents.defaults.workspace` by default. The Sidebar's Projects group renders real project rows. Remaining surfaces below are still placeholders.
+`clawhq.health`, `clawhq.projects.*`, and `clawhq.chats.*` are wired. Project rows in the Sidebar expand to show their chats with a "+ New chat" button. Chats persist as one JSON-per-chat under `~/.openclaw/clawhq/data/chats/` — fully independent of OHQ's `.oswald-hq/chats/`. Chat detail screen + LLM round-trip land in step 3b.
 
 ## Install (after the dangerous-code scan landmine)
 
@@ -17,20 +17,22 @@ openclaw plugins install --force /home/jesse/claw-hq/apps/openclaw-plugin/claw-h
 openclaw gateway restart
 ```
 
-## Planned RPCs
+## RPC surface
 
-| Method                       | Purpose                                                                       |
-| ---------------------------- | ----------------------------------------------------------------------------- |
-| `clawhq.health`              | Liveness + scaffold marker (returns plugin id, version, workspace, surfaces). |
-| `clawhq.projects.list`       | List `<workspaceRoot>/*` as Claw HQ projects.                                 |
-| `clawhq.projects.get`        | Project memory snapshot (BRIEF / ROADMAP / TASKS / memory/INDEX).             |
-| `clawhq.chats.list`          | Chats scoped to a project.                                                    |
-| `clawhq.chats.history`       | Messages for one chat.                                                        |
-| `clawhq.chats.append`        | Append a message to a chat + fan-out to live-feed subscribers.                |
-| `clawhq.subprojects.tasks.toggle` | Flip a GFM `- [ ]` / `- [x]` task in `TASKS.md`.                          |
-| `clawhq.uploads.put`         | Persist an upload (image / PDF / CSV / JSON / YAML).                          |
-| `clawhq.memory.read` / `write` | Read/write memory files via the existing OpenClaw `memory.*` RPCs.          |
-| `clawhq.events.subscribe`    | Cross-device live feed (mirror of OHQ `chats/[id]/events` SSE).               |
+| Method                       | Scope          | Purpose                                                                       |
+| ---------------------------- | -------------- | ----------------------------------------------------------------------------- |
+| `clawhq.health`              | operator.read  | Liveness + version + registered method list.                                  |
+| `clawhq.projects.list`       | operator.read  | List `<workspaceRoot>/projects/*` summaries.                                  |
+| `clawhq.projects.get`        | operator.read  | Project detail (BRIEF / ROADMAP / TASKS / memory/INDEX + sub-projects).       |
+| `clawhq.chats.list`          | operator.read  | Chat summaries, optionally filtered by `projectSlug`.                         |
+| `clawhq.chats.create`        | operator.write | Create a chat scoped to a project. Returns the new `Chat`.                    |
+| `clawhq.chats.history`       | operator.read  | Full `Chat` (messages included) for one `chatId`.                             |
+| `clawhq.chats.append`        | operator.write | Append `{role, content}` to a chat. Returns the new `ChatMessage`.            |
+| `clawhq.chats.delete`        | operator.write | Delete a chat by id.                                                          |
+| `clawhq.subprojects.tasks.toggle` | (planned) | Flip a GFM `- [ ]` / `- [x]` task in `TASKS.md`.                              |
+| `clawhq.uploads.put`         | (planned)      | Persist an upload (image / PDF / CSV / JSON / YAML).                          |
+| `clawhq.memory.read` / `write` | (planned)    | Read/write memory files.                                                      |
+| `clawhq.events.subscribe`    | (planned)      | Cross-device live feed (mirror of OHQ `chats/[id]/events` SSE).               |
 
 ## Verify load
 
