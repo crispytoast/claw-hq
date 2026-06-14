@@ -1,25 +1,35 @@
 #!/usr/bin/env node
 /**
- * Phase 2 end-to-end test, exercising the new multi-tenant relay + transparent
- * handshake design:
- *   1. POST /api/auth/login (or signup) to get a session cookie.
- *   2. Open ws://localhost:3838/ws/client with the cookie.
- *   3. Wait for the synthetic `claw.session_ready` event from the tunnel.
- *   4. Send chat.send directly (no OpenClaw connect on this side).
- *   5. Watch for chat events and verify the final reply.
+ * Phase 2 end-to-end chat round-trip:
+ *   1. Detect auth mode via /api/auth/me. In trusted-lan mode no login is
+ *      needed; in real-auth mode, login with $CLAW_HQ_EMAIL + $CLAW_HQ_PASSWORD.
+ *   2. Open /ws/client with the appropriate cookie (or none).
+ *   3. Wait for the synthetic `claw.session_ready` event.
+ *   4. Fire `chat.send` and assert a final assistant text comes back.
+ *
+ * Pre-rewrite this hard-coded the real-auth login path even though the dev
+ * relay defaults to trusted-lan; the 404 on /api/auth/login was a stale-test
+ * symptom, not a regression.
  */
 import { WebSocket } from "ws";
 
 const RELAY = process.env.CLAW_HQ_RELAY ?? "http://localhost:3838";
 const EMAIL = process.env.CLAW_HQ_EMAIL ?? "frank@example.com";
 const PASSWORD = process.env.CLAW_HQ_PASSWORD ?? "testpassword123";
+const TIMEOUT_MS = Number(process.env.CLAW_HQ_TIMEOUT_MS ?? 30_000);
 
 function log(kind, msg) {
   const ts = new Date().toISOString().slice(11, 23);
   console.log(`[${ts}] ${kind.padEnd(6)} ${msg}`);
 }
 
-async function login() {
+async function detectAuthMode() {
+  const r = await fetch(`${RELAY}/api/auth/me`);
+  if (!r.ok) throw new Error(`/api/auth/me returned ${r.status}`);
+  return r.json();
+}
+
+async function loginRealAuth() {
   const res = await fetch(`${RELAY}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -27,106 +37,98 @@ async function login() {
   });
   if (!res.ok) throw new Error(`login failed: ${res.status}`);
   const setCookie = res.headers.get("set-cookie");
-  if (!setCookie) throw new Error("no set-cookie header");
-  // Extract just `chq_session=...` (first attribute).
-  const cookie = setCookie.split(",").map((s) => s.split(";")[0].trim()).find((c) => c.startsWith("chq_session="));
-  if (!cookie) throw new Error("session cookie not found");
+  if (!setCookie) throw new Error("no set-cookie header from login");
+  const cookie = setCookie
+    .split(",")
+    .map((s) => s.split(";")[0].trim())
+    .find((c) => c.startsWith("chq_session="));
+  if (!cookie) throw new Error("chq_session cookie not found in login response");
   return cookie;
 }
 
 let nextId = 1;
-const requestId = () => `c-${nextId++}-${Math.random().toString(36).slice(2, 6)}`;
+const reqId = () => `c-${nextId++}-${Math.random().toString(36).slice(2, 6)}`;
 
 async function main() {
-  const cookie = await login();
-  log("LOGIN", `got cookie`);
+  const auth = await detectAuthMode();
+  log("AUTH", `mode=${auth.mode} user=${auth.user?.id ?? "?"}`);
+
+  const headers = {};
+  if (auth.mode !== "trusted-lan") {
+    headers.cookie = await loginRealAuth();
+    log("LOGIN", "got chq_session cookie");
+  }
 
   const wsUrl = RELAY.replace(/^http/, "ws") + "/ws/client";
-  const ws = new WebSocket(wsUrl, { headers: { cookie } });
+  const ws = new WebSocket(wsUrl, { headers });
+  let finalText = null;
 
-  let chatRunId = null;
-  let chatFinalText = null;
-  let timedOut = false;
-
-  const wallTimeout = setTimeout(() => {
-    timedOut = true;
-    log("FAIL", "wall-clock timeout 30s");
-    try { ws.close(); } catch {}
-  }, 30_000);
-
-  ws.on("open", () => log("OPEN", `ws ${wsUrl}`));
-
-  ws.on("close", (code, reason) => {
-    clearTimeout(wallTimeout);
-    log("CLOSE", `code=${code} reason=${reason?.toString() || "(none)"}`);
-    if (chatFinalText) {
-      console.log(`\n  Result: "${chatFinalText}"\n`);
-      process.exit(0);
-    }
-    process.exit(timedOut || !chatFinalText ? 1 : 0);
-  });
-
-  ws.on("error", (err) => log("ERR", err.message));
+  const timer = setTimeout(() => {
+    log("FAIL", `wall-clock timeout ${TIMEOUT_MS}ms (final="${finalText ?? "<none>"}")`);
+    try { ws.close(); } catch { /* noop */ }
+    process.exit(1);
+  }, TIMEOUT_MS);
 
   const sendFrame = (frame) => {
-    log("SEND", `${frame.method ?? frame.type} ${JSON.stringify(frame).slice(0, 100)}`);
+    log("SEND", `${frame.method ?? frame.type}`);
     ws.send(JSON.stringify({ kind: "frame", clientId: "self", direction: "client-to-agent", frame }));
   };
+
+  ws.on("open", () => log("OPEN", wsUrl));
+  ws.on("error", (err) => log("ERR", err.message));
+  ws.on("close", (code, reason) => {
+    clearTimeout(timer);
+    log("CLOSE", `code=${code} reason=${reason?.toString() || "(none)"}`);
+    if (finalText) {
+      console.log(`\n  Result: chat final="${finalText.slice(0, 100)}${finalText.length > 100 ? "…" : ""}"\n`);
+      process.exit(0);
+    }
+    process.exit(1);
+  });
 
   ws.on("message", (raw) => {
     let env;
     try { env = JSON.parse(raw.toString()); } catch { return; }
     if (env.kind !== "frame" || env.direction !== "agent-to-client") return;
     const frame = env.frame;
-    if (!frame || typeof frame !== "object") return;
+    if (!frame || typeof frame !== "object" || frame.type !== "event") return;
 
-    if (frame.type === "event") {
-      if (frame.event === "claw.session_ready") {
-        const p = frame.payload ?? {};
-        log("READY", `protocol=${p.protocol} scopes=${(p.scopes ?? []).join(",")}`);
-        chatRunId = requestId();
-        sendFrame({
-          type: "req",
-          id: chatRunId,
-          method: "chat.send",
-          params: {
-            sessionKey: "agent:main:main",
-            message: "Reply with just the single word: ok",
-            idempotencyKey: `claw-hq-phase2-${Date.now()}`,
-          },
-        });
-        return;
-      }
-      if (frame.event === "relay.agent_offline") {
-        log("FAIL", "tunnel agent is offline; start it with `pnpm dev:tunnel`");
-        try { ws.close(); } catch {}
-        return;
-      }
-      if (frame.event === "claw.session_failed") {
-        log("FAIL", `session failed: ${JSON.stringify(frame.payload)}`);
-        try { ws.close(); } catch {}
-        return;
-      }
-      // Other events — log briefly.
-      const payloadStr = JSON.stringify(frame.payload ?? {});
-      log("EV", `${frame.event} ${payloadStr.slice(0, 140)}${payloadStr.length > 140 ? "…" : ""}`);
-
-      if (frame.event === "chat" && frame.payload?.state === "final") {
-        const parts = frame.payload?.message?.content;
-        if (Array.isArray(parts)) {
-          const textPart = parts.find((p) => p && p.type === "text" && typeof p.text === "string");
-          if (textPart) chatFinalText = textPart.text;
-        }
-        if (chatFinalText) {
-          log("DONE", `chat final: "${chatFinalText}"`);
-          try { ws.close(1000, "phase2-test complete"); } catch {}
-        }
-      }
+    if (frame.event === "claw.session_ready") {
+      const p = frame.payload ?? {};
+      log("READY", `protocol=${p.protocol ?? "?"}`);
+      sendFrame({
+        type: "req",
+        id: reqId(),
+        method: "chat.send",
+        params: {
+          sessionKey: "agent:main:phase2-roundtrip",
+          message: "Reply with just the single word: ok",
+          idempotencyKey: `phase2-${Date.now()}`,
+        },
+      });
       return;
     }
-
-    if (frame.type === "res") {
-      log("RES", `id=${frame.id} ok=${frame.ok} ${JSON.stringify(frame.payload ?? frame.error ?? {}).slice(0, 100)}`);
+    if (frame.event === "relay.agent_offline") {
+      log("FAIL", "tunnel-agent is offline");
+      try { ws.close(); } catch { /* noop */ }
+      return;
+    }
+    if (frame.event === "claw.session_failed") {
+      log("FAIL", `session failed: ${JSON.stringify(frame.payload ?? {})}`);
+      try { ws.close(); } catch { /* noop */ }
+      return;
+    }
+    if (frame.event === "chat" && frame.payload?.state === "final") {
+      const parts = frame.payload?.message?.content;
+      if (Array.isArray(parts)) {
+        const textPart = parts.find((p) => p && p.type === "text" && typeof p.text === "string");
+        if (textPart) finalText = textPart.text;
+      }
+      if (finalText) {
+        log("DONE", `final received`);
+        try { ws.close(1000, "phase2 ok"); } catch { /* noop */ }
+      }
+      return;
     }
   });
 }
