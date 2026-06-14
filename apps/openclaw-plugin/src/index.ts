@@ -20,7 +20,7 @@ import {
 } from "./memory.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.9";
+const PLUGIN_VERSION = "0.0.10";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -657,11 +657,11 @@ export default definePluginEntry({
           }
           if (
             typeof p.role !== "string" ||
-            !["user", "assistant", "system"].includes(p.role)
+            !["user", "assistant", "system", "tool"].includes(p.role)
           ) {
             respond(false, undefined, {
               code: "INVALID_REQUEST",
-              message: "role must be user|assistant|system",
+              message: "role must be user|assistant|system|tool",
             });
             return;
           }

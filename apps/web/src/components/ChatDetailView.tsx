@@ -74,9 +74,30 @@ interface Props {
 
 interface PersistedMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   createdMs: number;
+}
+
+interface PersistedToolPayload {
+  toolCallId: string;
+  name: string;
+  args?: unknown;
+  result?: unknown;
+  isError?: boolean;
+  startedMs?: number;
+  doneMs?: number;
+}
+
+function parsePersistedTool(content: string): PersistedToolPayload | null {
+  if (!content) return null;
+  try {
+    const obj = JSON.parse(content) as Record<string, unknown>;
+    if (typeof obj.toolCallId !== "string" || typeof obj.name !== "string") return null;
+    return obj as unknown as PersistedToolPayload;
+  } catch {
+    return null;
+  }
 }
 
 interface PersistedChat {
@@ -326,10 +347,39 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         if (cancelled) return;
         const chat = result.chat;
         setChatTitle(chat.title);
-        const display: DisplayItem[] = chat.messages.map((m) => ({
-          kind: "message" as const,
-          message: { id: m.id, role: m.role, text: m.content },
-        }));
+        const display: DisplayItem[] = [];
+        for (const m of chat.messages) {
+          if (m.role === "tool") {
+            const payload = parsePersistedTool(m.content);
+            if (payload) {
+              const isError = payload.isError === true;
+              display.push({
+                kind: "tool",
+                tool: {
+                  toolCallId: payload.toolCallId,
+                  name: payload.name,
+                  args: payload.args,
+                  result: payload.result,
+                  isError,
+                  status: isError ? "error" : "done",
+                  startedMs: payload.startedMs ?? m.createdMs,
+                  doneMs: payload.doneMs ?? m.createdMs,
+                },
+              });
+              continue;
+            }
+            // Corrupt payload — surface as system row so we don't drop it.
+            display.push({
+              kind: "message",
+              message: { id: m.id, role: "system", text: `[unparseable tool entry]` },
+            });
+            continue;
+          }
+          display.push({
+            kind: "message",
+            message: { id: m.id, role: m.role as "user" | "assistant" | "system", text: m.content },
+          });
+        }
         setItems(display);
         // If we already have prior turns, the agent session was primed before —
         // assume memory's already in context.
@@ -440,6 +490,8 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       if (phase === "result") {
         const result = data.result;
         const isError = data.isError === true;
+        let persistedArgs: unknown = undefined;
+        let persistedStartedMs = ts;
         setItems((prev) => {
           const idx = prev.findIndex((it) => it.kind === "tool" && it.tool.toolCallId === toolCallId);
           if (idx === -1) {
@@ -464,6 +516,8 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           const next = [...prev];
           const existing = next[idx]!;
           if (existing.kind !== "tool") return prev;
+          persistedArgs = existing.tool.args;
+          persistedStartedMs = existing.tool.startedMs;
           next[idx] = {
             kind: "tool",
             tool: {
@@ -476,10 +530,28 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           };
           return next;
         });
+        // Persist the completed tool call so a chat reload reconstructs it.
+        const payload: PersistedToolPayload = {
+          toolCallId,
+          name,
+          args: persistedArgs,
+          result,
+          isError,
+          startedMs: persistedStartedMs,
+          doneMs: ts,
+        };
+        void client
+          .call<{ message?: { id?: string } }>("clawhq.chats.append", {
+            chatId,
+            role: "tool",
+            content: JSON.stringify(payload),
+          })
+          .then((r) => { if (r?.message?.id) noteOwnPersist(r.message.id); })
+          .catch((e) => { console.warn("clawhq.chats.append (tool) failed:", e); });
         return;
       }
     });
-  }, [client, sessionKey]);
+  }, [client, sessionKey, chatId, noteOwnPersist]);
 
   // Cross-device live feed — broadcasts emitted by clawhq.chats.append on any
   // device land here. Skip our own echoes; otherwise append the new bubble.
@@ -496,11 +568,41 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         if (recentlyPersistedIdsRef.current.has(msg.id)) return;
         // Treat any inbound user turn as evidence the agent session is primed.
         if (msg.role === "user") memoryInjectedRef.current = true;
+        if (msg.role === "tool") {
+          const payload = parsePersistedTool(msg.content);
+          if (!payload) return;
+          const isError = payload.isError === true;
+          setItems((prev) => {
+            if (prev.some((it) => it.kind === "tool" && it.tool.toolCallId === payload.toolCallId)) {
+              return prev;
+            }
+            return [
+              ...prev,
+              {
+                kind: "tool",
+                tool: {
+                  toolCallId: payload.toolCallId,
+                  name: payload.name,
+                  args: payload.args,
+                  result: payload.result,
+                  isError,
+                  status: isError ? "error" : "done",
+                  startedMs: payload.startedMs ?? msg.createdMs,
+                  doneMs: payload.doneMs ?? msg.createdMs,
+                },
+              },
+            ];
+          });
+          return;
+        }
         setItems((prev) => {
           if (prev.some((it) => it.kind === "message" && it.message.id === msg.id)) return prev;
           return [
             ...prev,
-            { kind: "message" as const, message: { id: msg.id, role: msg.role, text: msg.content } },
+            {
+              kind: "message" as const,
+              message: { id: msg.id, role: msg.role as "user" | "assistant" | "system", text: msg.content },
+            },
           ];
         });
         return;

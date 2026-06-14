@@ -9,7 +9,11 @@ const VALID_SLUG = /^[a-z0-9][a-z0-9-]*$/;
 const VALID_CHAT_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type ChatRole = "user" | "assistant" | "system";
+// "tool" entries persist a structured tool-call record. Their `content` is a
+// JSON-stringified blob of { toolCallId, name, args, result, isError,
+// startedMs, doneMs } so older readers see a self-describing payload and the
+// SPA can reconstruct ToolBlock state on history load.
+export type ChatRole = "user" | "assistant" | "system" | "tool";
 
 export interface ChatMessage {
   id: string;
@@ -150,7 +154,7 @@ export async function appendMessage(input: {
   content: string;
 }): Promise<AppendResult | null> {
   if (!VALID_CHAT_ID.test(input.chatId)) return null;
-  if (!["user", "assistant", "system"].includes(input.role)) return null;
+  if (!["user", "assistant", "system", "tool"].includes(input.role)) return null;
   const content = (input.content ?? "").toString();
   return withChatLock(input.chatId, async () => {
     const chat = await readChat(input.chatId);
