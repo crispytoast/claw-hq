@@ -97,7 +97,7 @@ interface Props {
   activeSessionKey: string | null;
   onPickSession(key: string): void;
   activeChatId: string | null;
-  onPickChat(chatId: string, projectSlug: string | null): void;
+  onPickChat(chatId: string, projectSlug: string | null, searchQuery?: string): void;
   onChatDeleted?(chatId: string): void;
   activeProjectSlug: string | null;
   onPickProject(slug: string): void;
@@ -555,7 +555,7 @@ export function Sidebar({
                                 className={`cl-row cl-search-hit ${isHitActive ? "cl-active" : ""}`}
                                 title={h.title}
                                 onClick={() => {
-                                  onPickChat(h.id, h.projectSlug);
+                                  onPickChat(h.id, h.projectSlug, searchQuery);
                                   onMobileClose();
                                 }}
                               >

@@ -62,6 +62,12 @@ interface Props {
   projectSlug: string | null;
   status: ConnectionStatus;
   onTitleChange?(chatId: string, title: string): void;
+  /**
+   * If set, render `<mark>` highlights around case-insensitive matches in every
+   * message bubble + auto-scroll to the first match once items have loaded.
+   * Threaded through from the sidebar search → ChatApp → here.
+   */
+  initialSearchQuery?: string;
 }
 
 interface PersistedMessage {
@@ -167,7 +173,7 @@ async function buildMemoryPreamble(
   }
 }
 
-export function ChatDetailView({ client, chatId, projectSlug, status, onTitleChange }: Props) {
+export function ChatDetailView({ client, chatId, projectSlug, status, onTitleChange, initialSearchQuery }: Props) {
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [chatTitle, setChatTitle] = useState<string>("");
   const [input, setInput] = useState("");
@@ -229,12 +235,46 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     setAttachments((prev) => prev.filter((a) => a.localId !== localId));
   }, []);
 
-  // Auto-scroll to bottom on new items.
+  // Track whether we've consumed the initial search query for THIS chat load.
+  // Once we've scrolled to the first match (or confirmed there isn't one), we
+  // stop hijacking the bottom-scroll behavior so new turns auto-scroll normally.
+  const searchScrolledRef = useRef(false);
+  useEffect(() => {
+    searchScrolledRef.current = false;
+  }, [chatId, initialSearchQuery]);
+
+  // Auto-scroll: on first load with a search query, scroll to the first
+  // matching message; otherwise (and after) scroll to bottom on new items.
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
+    if (
+      initialSearchQuery &&
+      initialSearchQuery.trim() &&
+      !searchScrolledRef.current &&
+      items.some((it) => it.kind === "message")
+    ) {
+      const q = initialSearchQuery.toLowerCase();
+      const hit = items.find(
+        (it) => it.kind === "message" && it.message.text.toLowerCase().includes(q),
+      );
+      if (hit && hit.kind === "message") {
+        const node = el.querySelector(
+          `[data-message-id="${CSS.escape(hit.message.id)}"]`,
+        ) as HTMLElement | null;
+        if (node) {
+          node.scrollIntoView({ block: "center", behavior: "auto" });
+          node.classList.add("bubble-flash");
+          setTimeout(() => node.classList.remove("bubble-flash"), 1600);
+          searchScrolledRef.current = true;
+          return;
+        }
+      }
+      // No match — fall through to bottom scroll and don't try again.
+      searchScrolledRef.current = true;
+    }
     el.scrollTop = el.scrollHeight;
-  }, [items]);
+  }, [items, initialSearchQuery]);
 
   // Load persisted chat history.
   useEffect(() => {
@@ -568,9 +608,13 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           }
           const m = it.message;
           return (
-            <div key={itemKey(it)} className={`bubble ${m.role}`}>
+            <div
+              key={itemKey(it)}
+              data-message-id={m.id}
+              className={`bubble ${m.role}`}
+            >
               {m.role === "system" && <span className="role-tag">system</span>}
-              <BubbleContent text={m.text} />
+              <BubbleContent text={m.text} highlight={initialSearchQuery} />
               {m.streaming && <span className="spinner" style={{ marginLeft: "0.5rem" }} />}
             </div>
           );
@@ -732,12 +776,45 @@ function ToolBlock({ tool }: { tool: DisplayTool }) {
   );
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Split `text` around case-insensitive matches of `query` and return a fragment
+ * with each match wrapped in `<mark>`. If query is empty, returns the text as-is.
+ */
+function highlightText(text: string, query: string | undefined): React.ReactNode {
+  if (!query) return text;
+  const trimmed = query.trim();
+  if (!trimmed) return text;
+  let re: RegExp;
+  try {
+    re = new RegExp(escapeRegExp(trimmed), "gi");
+  } catch {
+    return text;
+  }
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(<mark key={`h-${m.index}`} className="bubble-hit">{m[0]}</mark>);
+    last = m.index + m[0].length;
+    // Defensive: zero-width match would loop forever.
+    if (m[0].length === 0) re.lastIndex = last + 1;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
 /**
  * Render bubble text with `[label](url)` links turned into clickable anchors so
  * attachment refs show up properly. No other markdown — we don't want to
- * over-interpret model output.
+ * over-interpret model output. Optionally highlights case-insensitive matches
+ * of `highlight` with `<mark>`.
  */
-function BubbleContent({ text }: { text: string }) {
+function BubbleContent({ text, highlight }: { text: string; highlight?: string }) {
   const parts = useMemo(() => {
     const out: Array<{ kind: "text" | "link"; text: string; url?: string }> = [];
     const re = /\[([^\]]+)\]\(([^)]+)\)/g;
@@ -755,9 +832,11 @@ function BubbleContent({ text }: { text: string }) {
     <>
       {parts.map((p, i) =>
         p.kind === "link" ? (
-          <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="bubble-link">{p.text}</a>
+          <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="bubble-link">
+            {highlightText(p.text, highlight)}
+          </a>
         ) : (
-          <span key={i}>{p.text}</span>
+          <span key={i}>{highlightText(p.text, highlight)}</span>
         ),
       )}
     </>

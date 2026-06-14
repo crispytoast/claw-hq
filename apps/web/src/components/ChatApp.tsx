@@ -42,6 +42,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeChatProject, setActiveChatProject] = useState<string | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState<string>("");
+  const [chatSearchQuery, setChatSearchQuery] = useState<string | null>(null);
   const [activeProjectSlug, setActiveProjectSlug] = useState<string | null>(null);
   const [activeMemoryProject, setActiveMemoryProject] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -126,12 +127,13 @@ export function ChatApp({ user, onLogout }: Props) {
     setPage("chat");
   }, []);
 
-  const handlePickChat = useCallback((chatId: string, projectSlug: string | null) => {
+  const handlePickChat = useCallback((chatId: string, projectSlug: string | null, searchQuery?: string) => {
     setActiveChatId(chatId);
     setActiveChatProject(projectSlug);
     setActiveChatTitle("");
     setActiveProjectSlug(null);
     setActiveMemoryProject(null);
+    setChatSearchQuery(searchQuery && searchQuery.trim() ? searchQuery.trim() : null);
     setPage("chat");
   }, []);
 
@@ -316,6 +318,7 @@ export function ChatApp({ user, onLogout }: Props) {
                 projectSlug={activeChatProject}
                 status={status}
                 onTitleChange={handleChatTitle}
+                initialSearchQuery={chatSearchQuery ?? undefined}
               />
             ) : activeKey ? (
               <ChatPane
