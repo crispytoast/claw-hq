@@ -678,6 +678,31 @@ a:hover { text-decoration: underline; }
   font-family: inherit;
   white-space: pre-wrap;
 }
+.project-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 56rem;
+  margin: 0 auto 0.75rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.project-breadcrumb-sep { color: var(--border); }
+.page-row-clickable {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+}
+.page-row-clickable:hover { background: var(--bg-elev2); }
 
 .section-title {
   font-size: 0.9rem;

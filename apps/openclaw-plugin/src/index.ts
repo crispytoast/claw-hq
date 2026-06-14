@@ -13,7 +13,7 @@ import {
 import { toggleTask } from "./tasks.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.6";
+const PLUGIN_VERSION = "0.0.7";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -232,6 +232,52 @@ async function listSubprojects(workspaceRoot: string, parent: string) {
   return out;
 }
 
+async function subprojectGet(
+  workspaceRoot: string | null,
+  projectSlug: string,
+  subSlug: string,
+) {
+  if (!workspaceRoot) return null;
+  if (!VALID_SLUG.test(projectSlug)) return null;
+  if (!VALID_SLUG.test(subSlug)) return null;
+  const projectsDir = path.resolve(path.join(workspaceRoot, "projects"));
+  const subDir = path.resolve(
+    path.join(projectsDir, projectSlug, "subprojects", subSlug),
+  );
+  // Defense-in-depth: refuse anything that escapes projects/.
+  if (!subDir.startsWith(projectsDir + path.sep)) return null;
+  let stat;
+  try {
+    stat = await fs.stat(subDir);
+  } catch {
+    return null;
+  }
+  if (!stat.isDirectory()) return null;
+  const [brief, roadmap, tasks] = await Promise.all([
+    readFileSafe(path.join(subDir, "BRIEF.md")),
+    readFileSafe(path.join(subDir, "ROADMAP.md")),
+    readFileSafe(path.join(subDir, "TASKS.md")),
+  ]);
+  const { data: fm, body } = parseFrontmatter(brief);
+  const nameMatch = body.match(/^#\s+(.+)/m);
+  const name = fm.name || (nameMatch ? nameMatch[1]!.trim() : subSlug);
+  const blurb = fm.blurb || firstNonHeadingLine(body);
+  const status = parseSubprojectStatus(fm.status);
+  const progress = calculateProgress(tasks || brief);
+  return {
+    summary: {
+      parent: projectSlug,
+      id: subSlug,
+      name,
+      blurb,
+      status,
+      progress,
+      lastUpdatedMs: stat.mtimeMs,
+    },
+    docs: { brief, roadmap, tasks },
+  };
+}
+
 async function projectsGet(workspaceRoot: string | null, slug: string) {
   if (!workspaceRoot) return null;
   if (!slug || !VALID_SLUG.test(slug)) return null;
@@ -294,6 +340,7 @@ export default definePluginEntry({
             "clawhq.health",
             "clawhq.projects.list",
             "clawhq.projects.get",
+            "clawhq.subprojects.get",
             "clawhq.chats.list",
             "clawhq.chats.create",
             "clawhq.chats.history",
@@ -343,6 +390,44 @@ export default definePluginEntry({
             respond(false, undefined, {
               code: "NOT_FOUND",
               message: `no project: ${slug}`,
+            });
+            return;
+          }
+          respond(true, result);
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.subprojects.get",
+      async ({ respond, params }) => {
+        try {
+          const p = (params ?? {}) as { projectSlug?: unknown; subSlug?: unknown };
+          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: projectSlug",
+            });
+            return;
+          }
+          if (typeof p.subSlug !== "string" || !p.subSlug) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: subSlug",
+            });
+            return;
+          }
+          const result = await subprojectGet(workspaceRoot, p.projectSlug, p.subSlug);
+          if (!result) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no subproject: ${p.projectSlug}/${p.subSlug}`,
             });
             return;
           }

@@ -32,6 +32,25 @@ interface ProjectGetResult {
   subprojects: SubprojectSummary[];
 }
 
+interface SubprojectGetResult {
+  summary: SubprojectSummary;
+  docs: { brief: string; roadmap: string; tasks: string };
+}
+
+/** Normalized shape shared between project + subproject rendering. */
+interface View {
+  kind: "project" | "subproject";
+  name: string;
+  blurb: string;
+  statusLabel: string;
+  statusClass: string;
+  progress: number;
+  briefMd: string;
+  roadmapMd: string;
+  tasksMd: string;
+  subprojects: SubprojectSummary[];
+}
+
 // GitHub-style checkbox. Capture pre, state char, post so we can re-render with
 // the original prefix preserved (`-` vs `*`, indentation, etc.).
 const CHECKBOX_LINE_REGEX = /^(\s*[-*]\s*\[)([ xX])(\]\s)(.*)$/;
@@ -66,8 +85,22 @@ function parseTasksMarkdown(content: string): ParsedTasksBlock {
   return { lines, byLineIdx, count: checkboxIndex };
 }
 
+function projectStatusClass(s: string): string {
+  const l = s.toLowerCase();
+  if (l.includes("live")) return "ok";
+  if (l.includes("build") || l.includes("active")) return "warn";
+  return "bad";
+}
+
+function subprojectStatusClass(s: SubprojectSummary["status"]): string {
+  if (s === "done") return "ok";
+  if (s === "active") return "warn";
+  return "bad";
+}
+
 export function ProjectPage({ client, status, projectSlug }: Props) {
-  const [data, setData] = useState<ProjectGetResult | null>(null);
+  const [activeSub, setActiveSub] = useState<string | null>(null);
+  const [view, setView] = useState<View | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   /** Per-checkbox in-flight flag so users can't double-toggle. */
@@ -78,22 +111,54 @@ export function ProjectPage({ client, status, projectSlug }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const result = await client.call<ProjectGetResult>("clawhq.projects.get", {
-        slug: projectSlug,
-      });
-      setData(result);
+      if (activeSub) {
+        const result = await client.call<SubprojectGetResult>(
+          "clawhq.subprojects.get",
+          { projectSlug, subSlug: activeSub },
+        );
+        setView({
+          kind: "subproject",
+          name: result.summary.name,
+          blurb: result.summary.blurb,
+          statusLabel: result.summary.status,
+          statusClass: subprojectStatusClass(result.summary.status),
+          progress: result.summary.progress,
+          briefMd: result.docs.brief,
+          roadmapMd: result.docs.roadmap,
+          tasksMd: result.docs.tasks,
+          subprojects: [],
+        });
+      } else {
+        const result = await client.call<ProjectGetResult>(
+          "clawhq.projects.get",
+          { slug: projectSlug },
+        );
+        setView({
+          kind: "project",
+          name: result.summary.name,
+          blurb: result.summary.blurb,
+          statusLabel: result.summary.status,
+          statusClass: projectStatusClass(result.summary.status),
+          progress: result.summary.progress,
+          briefMd: result.docs.brief,
+          roadmapMd: result.docs.roadmap,
+          tasksMd: result.docs.tasks,
+          subprojects: result.subprojects,
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [client, status.kind, projectSlug]);
+  }, [client, status.kind, projectSlug, activeSub]);
 
   useEffect(() => {
+    setView(null);
     void load();
   }, [load]);
 
-  // Cross-device: when any device toggles a task, refresh our tasks content.
+  // Cross-device: when any device toggles a task, refresh the matching TASKS.md.
   useEffect(() => {
     if (!client) return;
     return client.onEvent((ev: OpenClawEvent) => {
@@ -103,22 +168,23 @@ export function ProjectPage({ client, status, projectSlug }: Props) {
         subprojectSlug?: unknown;
         content?: unknown;
       };
-      // Only project-level tasks render on this page (subprojects later).
       if (p.projectSlug !== projectSlug) return;
-      if (p.subprojectSlug !== null) return;
+      const matchesView =
+        activeSub === null ? p.subprojectSlug === null : p.subprojectSlug === activeSub;
+      if (!matchesView) return;
       if (typeof p.content !== "string") return;
-      setData((prev) => (prev ? { ...prev, docs: { ...prev.docs, tasks: p.content as string } } : prev));
+      setView((prev) => (prev ? { ...prev, tasksMd: p.content as string } : prev));
     });
-  }, [client, projectSlug]);
+  }, [client, projectSlug, activeSub]);
 
   const toggleTask = useCallback(
     async (checkboxIndex: number, next: boolean) => {
       if (!client || status.kind !== "ready") return;
       setPendingToggles((s) => new Set(s).add(checkboxIndex));
       // Optimistic update so the click feels instant.
-      setData((prev) => {
+      setView((prev) => {
         if (!prev) return prev;
-        const parsed = parseTasksMarkdown(prev.docs.tasks);
+        const parsed = parseTasksMarkdown(prev.tasksMd);
         const newLines = [...parsed.lines];
         for (const [idx, info] of parsed.byLineIdx) {
           if (info.checkboxIndex !== checkboxIndex) continue;
@@ -128,16 +194,16 @@ export function ProjectPage({ client, status, projectSlug }: Props) {
           );
           break;
         }
-        return { ...prev, docs: { ...prev.docs, tasks: newLines.join("\n") } };
+        return { ...prev, tasksMd: newLines.join("\n") };
       });
       try {
         await client.call("clawhq.tasks.toggle", {
           projectSlug,
+          subprojectSlug: activeSub ?? undefined,
           lineIndex: checkboxIndex,
           checked: next,
         });
       } catch (err) {
-        // Roll back optimistic update + show error.
         setError(err instanceof Error ? err.message : String(err));
         void load();
       } finally {
@@ -148,13 +214,13 @@ export function ProjectPage({ client, status, projectSlug }: Props) {
         });
       }
     },
-    [client, status.kind, projectSlug, load],
+    [client, status.kind, projectSlug, activeSub, load],
   );
 
   const parsedTasks = useMemo<ParsedTasksBlock | null>(() => {
-    if (!data?.docs.tasks) return null;
-    return parseTasksMarkdown(data.docs.tasks);
-  }, [data?.docs.tasks]);
+    if (!view?.tasksMd) return null;
+    return parseTasksMarkdown(view.tasksMd);
+  }, [view?.tasksMd]);
 
   const taskProgress = useMemo(() => {
     if (!parsedTasks || parsedTasks.count === 0) return null;
@@ -163,39 +229,51 @@ export function ProjectPage({ client, status, projectSlug }: Props) {
     return { checked, total: parsedTasks.count, pct: Math.round((checked / parsedTasks.count) * 100) };
   }, [parsedTasks]);
 
+  const title = view?.name ?? (activeSub ? `${projectSlug} / ${activeSub}` : projectSlug);
+  const subtitle = view?.blurb;
+
   return (
     <PageShell
-      title={data?.summary.name ?? projectSlug}
-      subtitle={data?.summary.blurb}
+      title={title}
+      subtitle={subtitle}
       actions={
         <button className="btn-ghost" onClick={() => void load()} disabled={loading}>
           Refresh
         </button>
       }
     >
-      {loading && !data && <div className="empty"><div className="spinner" />Loading project…</div>}
+      {activeSub && (
+        <div className="project-breadcrumb">
+          <button className="btn-ghost" onClick={() => setActiveSub(null)}>
+            ← {projectSlug}
+          </button>
+          <span className="project-breadcrumb-sep">/</span>
+          <span>{view?.name ?? activeSub}</span>
+        </div>
+      )}
+      {loading && !view && <div className="empty"><div className="spinner" />Loading…</div>}
       {error && <div className="alert error">{error}</div>}
-      {data && (
+      {view && (
         <div className="project-cards">
           <div className="project-card">
             <div className="project-card-header">
               <h3>BRIEF</h3>
-              <span className={`status-pill ${statusPillClass(data.summary.status)}`}>
+              <span className={`status-pill ${view.statusClass}`}>
                 <span className="status-dot" />
-                {data.summary.status}
+                {view.statusLabel}
               </span>
             </div>
-            <pre className="project-card-body">{data.docs.brief.trim() || "(empty)"}</pre>
+            <pre className="project-card-body">{view.briefMd.trim() || "(empty)"}</pre>
           </div>
 
           <div className="project-card">
             <div className="project-card-header">
               <h3>ROADMAP</h3>
-              {data.summary.progress > 0 && (
-                <span className="cl-row-tag">{data.summary.progress}% complete</span>
+              {view.progress > 0 && (
+                <span className="cl-row-tag">{view.progress}% complete</span>
               )}
             </div>
-            <pre className="project-card-body">{data.docs.roadmap.trim() || "(empty)"}</pre>
+            <pre className="project-card-body">{view.roadmapMd.trim() || "(empty)"}</pre>
           </div>
 
           <div className="project-card">
@@ -225,10 +303,9 @@ export function ProjectPage({ client, status, projectSlug }: Props) {
                       </label>
                     );
                   }
-                  // Non-checkbox lines render as plain markdown text (preserve blank lines).
                   return (
                     <div key={idx} className="task-meta-line">
-                      {line || " "}
+                      {line || " "}
                     </div>
                   );
                 })
@@ -238,47 +315,39 @@ export function ProjectPage({ client, status, projectSlug }: Props) {
             </div>
           </div>
 
-          {data.subprojects.length > 0 && (
+          {view.kind === "project" && view.subprojects.length > 0 && (
             <div className="project-card">
               <div className="project-card-header">
                 <h3>SUBPROJECTS</h3>
-                <span className="cl-row-tag">{data.subprojects.length}</span>
+                <span className="cl-row-tag">{view.subprojects.length}</span>
               </div>
               <ul className="page-list">
-                {data.subprojects.map((s) => (
-                  <li key={s.id} className="page-row">
-                    <div className="page-row-main">
-                      <div className="page-row-title">{s.name}</div>
-                      {s.blurb && <div className="page-row-subtitle">{s.blurb}</div>}
-                    </div>
-                    <div className="page-row-meta">
-                      <span className={`status-pill ${subprojectStatusClass(s.status)}`}>
-                        <span className="status-dot" />
-                        {s.status}
-                      </span>
-                      {s.progress > 0 && <span>{s.progress}%</span>}
-                    </div>
+                {view.subprojects.map((s) => (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      className="page-row page-row-clickable"
+                      onClick={() => setActiveSub(s.id)}
+                    >
+                      <div className="page-row-main">
+                        <div className="page-row-title">{s.name}</div>
+                        {s.blurb && <div className="page-row-subtitle">{s.blurb}</div>}
+                      </div>
+                      <div className="page-row-meta">
+                        <span className={`status-pill ${subprojectStatusClass(s.status)}`}>
+                          <span className="status-dot" />
+                          {s.status}
+                        </span>
+                        {s.progress > 0 && <span>{s.progress}%</span>}
+                      </div>
+                    </button>
                   </li>
                 ))}
               </ul>
             </div>
           )}
-
         </div>
       )}
     </PageShell>
   );
-}
-
-function statusPillClass(s: string): string {
-  const l = s.toLowerCase();
-  if (l.includes("live")) return "ok";
-  if (l.includes("build") || l.includes("active")) return "warn";
-  return "bad";
-}
-
-function subprojectStatusClass(s: string): string {
-  if (s === "done") return "ok";
-  if (s === "active") return "warn";
-  return "bad";
 }
