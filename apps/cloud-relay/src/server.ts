@@ -16,6 +16,7 @@ import { registerAuthRoutes } from "./auth.js";
 import { registerSystemRoutes } from "./system.js";
 import { registerPushRoutes } from "./push.js";
 import { registerUploadsRoutes } from "./uploads.js";
+import { registerInstallRoutes } from "./install.js";
 import { registerWsRoutes } from "./ws-routing.js";
 
 export interface ServerHandle {
@@ -45,6 +46,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   await registerSystemRoutes(fastify, { db, config });
   await registerPushRoutes(fastify, { db, config });
   await registerUploadsRoutes(fastify, { db, config });
+  await registerInstallRoutes(fastify, { config });
   registerWsRoutes(fastify, { db, config, inProcessAgentToken: opts.inProcessAgentToken });
 
   if (existsSync(config.webDistPath)) {
@@ -53,7 +55,12 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       prefix: "/",
     });
     fastify.setNotFoundHandler(async (req, reply) => {
-      if (req.url.startsWith("/api/") || req.url.startsWith("/ws/") || req.url.startsWith("/uploads/")) {
+      if (
+        req.url.startsWith("/api/")
+        || req.url.startsWith("/ws/")
+        || req.url.startsWith("/uploads/")
+        || req.url.startsWith("/install/")
+      ) {
         reply.code(404);
         return { error: "not found" };
       }
