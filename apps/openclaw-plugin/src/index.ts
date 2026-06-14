@@ -266,11 +266,28 @@ export default definePluginEntry({
 
     api.registerGatewayMethod(
       "clawhq.health",
-      ({ respond }) => {
+      ({ respond, client }) => {
+        const c = client as
+          | {
+              connect?: { scopes?: unknown; role?: unknown };
+              connId?: unknown;
+            }
+          | null
+          | undefined;
+        const callerScopes = Array.isArray(c?.connect?.scopes)
+          ? (c.connect.scopes as unknown[]).filter(
+              (s): s is string => typeof s === "string",
+            )
+          : [];
         respond(true, {
           plugin: PLUGIN_ID,
           version: PLUGIN_VERSION,
           workspaceRoot,
+          caller: {
+            scopes: callerScopes,
+            role: typeof c?.connect?.role === "string" ? c.connect.role : null,
+            connId: typeof c?.connId === "string" ? c.connId : null,
+          },
           methods: [
             "clawhq.health",
             "clawhq.projects.list",

@@ -15,6 +15,11 @@ import {
   type TunnelEnvelope,
 } from "@claw-hq/protocol-types";
 import { discoverOpenClaw } from "./openclaw-config.js";
+import {
+  buildDeviceConnectBlock,
+  loadOrCreateDeviceIdentity,
+  type DeviceIdentity,
+} from "./device-identity.js";
 
 export interface TunnelOptions {
   /** Relay URL — ws://host:port (no path). The tunnel appends /ws/agent. */
@@ -33,6 +38,13 @@ export interface TunnelHandle {
 
 const AGENT_VERSION = "0.0.3";
 const TUNNEL_CONNECT_PREFIX = "tunnel-connect-";
+const TUNNEL_PLATFORM = "linux";
+const TUNNEL_DEVICE_FAMILY = "claw-hq-tunnel";
+const REQUESTED_SCOPES = [
+  "operator.read",
+  "operator.write",
+  "operator.admin",
+];
 
 type SessionState = "handshaking" | "ready";
 
@@ -49,6 +61,21 @@ export function startTunnel(opts: TunnelOptions): TunnelHandle {
   let shuttingDown = false;
   let relayBackoffMs = 1_000;
   const gateways = new Map<string, GatewaySession>();
+  let deviceIdentity: DeviceIdentity | null = null;
+  void loadOrCreateDeviceIdentity()
+    .then((id) => {
+      deviceIdentity = id;
+      console.log(
+        `[tunnel] device identity ready id=${id.deviceId.slice(0, 12)}…`,
+      );
+    })
+    .catch((err) => {
+      console.warn(
+        `[tunnel] device identity load failed (will connect without it): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
 
   const relayAgentUrl = () => {
     const base = opts.relayUrl.replace(/\/+$/, "");
@@ -232,23 +259,49 @@ export function startTunnel(opts: TunnelOptions): TunnelHandle {
 
     if (session.state === "handshaking") {
       if (frame.type === "event" && frame.event === "connect.challenge") {
+        const payload = (frame.payload ?? {}) as Record<string, unknown>;
+        const nonce =
+          typeof payload.nonce === "string" ? payload.nonce.trim() : "";
+        const signedAtMs = Date.now();
+        const baseParams = {
+          minProtocol: 4,
+          maxProtocol: 4,
+          client: {
+            id: "gateway-client",
+            version: AGENT_VERSION,
+            platform: TUNNEL_PLATFORM,
+            deviceFamily: TUNNEL_DEVICE_FAMILY,
+            mode: "backend",
+          },
+          role: "operator",
+          scopes: REQUESTED_SCOPES,
+          caps: [],
+          commands: [],
+          permissions: {},
+          auth: { token: session.gatewayToken },
+          locale: "en-US",
+          userAgent: `claw-hq-tunnel/${AGENT_VERSION}`,
+        };
+        const params: Record<string, unknown> = { ...baseParams };
+        if (deviceIdentity && nonce) {
+          params.device = buildDeviceConnectBlock({
+            identity: deviceIdentity,
+            clientId: baseParams.client.id,
+            clientMode: baseParams.client.mode,
+            role: baseParams.role,
+            scopes: baseParams.scopes,
+            signedAtMs,
+            token: session.gatewayToken,
+            nonce,
+            platform: TUNNEL_PLATFORM,
+            deviceFamily: TUNNEL_DEVICE_FAMILY,
+          });
+        }
         const connectReq: OpenClawFrame = {
           type: "req",
           id: `${TUNNEL_CONNECT_PREFIX}${clientId}`,
           method: "connect",
-          params: {
-            minProtocol: 4,
-            maxProtocol: 4,
-            client: { id: "gateway-client", version: AGENT_VERSION, platform: "linux", mode: "backend" },
-            role: "operator",
-            scopes: ["operator.read", "operator.write"],
-            caps: [],
-            commands: [],
-            permissions: {},
-            auth: { token: session.gatewayToken },
-            locale: "en-US",
-            userAgent: `claw-hq-tunnel/${AGENT_VERSION}`,
-          },
+          params,
         };
         if (session.ws.readyState === 1) session.ws.send(JSON.stringify(connectReq));
         return;
