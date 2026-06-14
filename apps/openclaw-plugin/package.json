@@ -1,0 +1,30 @@
+{
+  "name": "@claw-hq/openclaw-plugin",
+  "version": "0.0.1",
+  "private": true,
+  "description": "OpenClaw plugin that backs Claw HQ — project-scoped chats, sub-project task toggles, file uploads, cross-device live feed.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.5.0",
+      "minGatewayVersion": "2026.5.0"
+    },
+    "build": {
+      "openclawVersion": "2026.5.28",
+      "pluginSdkVersion": "2026.5.28"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "openclaw": "2026.5.28",
+    "typescript": "^5.6.3"
+  }
+}

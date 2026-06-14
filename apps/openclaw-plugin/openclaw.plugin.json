@@ -1,0 +1,26 @@
+{
+  "id": "clawhq",
+  "name": "Claw HQ",
+  "description": "Backend plugin for the Claw HQ self-hosted GUI — project-scoped chats, sub-project task toggles, file uploads, cross-device live feed.",
+  "version": "0.0.1",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "workspaceRoot": {
+        "type": "string",
+        "description": "Absolute path to the workspace directory the plugin should surface as projects. Defaults to the OpenClaw agent workspace when omitted."
+      }
+    }
+  },
+  "uiHints": {
+    "workspaceRoot": {
+      "label": "Workspace root",
+      "placeholder": "/home/you/.openclaw/workspace",
+      "help": "Folder whose top-level entries become Claw HQ projects."
+    }
+  }
+}
