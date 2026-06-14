@@ -219,24 +219,31 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   // device land here. Skip our own echoes; otherwise append the new bubble.
   useEffect(() => {
     return client.onEvent((ev: OpenClawEvent) => {
-      if (ev.event !== "plugin.clawhq.chat.message") return;
-      const p = (ev.payload ?? {}) as {
-        chatId?: unknown;
-        message?: unknown;
-      };
-      if (p.chatId !== chatId) return;
-      const msg = p.message as PersistedMessage | undefined;
-      if (!msg || typeof msg.id !== "string") return;
-      if (recentlyPersistedIdsRef.current.has(msg.id)) return;
-      // Treat any inbound user turn as evidence the agent session is primed.
-      if (msg.role === "user") memoryInjectedRef.current = true;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) return prev;
-        return [
-          ...prev,
-          { id: msg.id, role: msg.role, text: msg.content },
-        ];
-      });
+      if (ev.event === "plugin.clawhq.chat.message") {
+        const p = (ev.payload ?? {}) as {
+          chatId?: unknown;
+          message?: unknown;
+        };
+        if (p.chatId !== chatId) return;
+        const msg = p.message as PersistedMessage | undefined;
+        if (!msg || typeof msg.id !== "string") return;
+        if (recentlyPersistedIdsRef.current.has(msg.id)) return;
+        // Treat any inbound user turn as evidence the agent session is primed.
+        if (msg.role === "user") memoryInjectedRef.current = true;
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) return prev;
+          return [
+            ...prev,
+            { id: msg.id, role: msg.role, text: msg.content },
+          ];
+        });
+        return;
+      }
+      if (ev.event === "plugin.clawhq.chat.renamed") {
+        const p = (ev.payload ?? {}) as { chatId?: unknown; title?: unknown };
+        if (p.chatId !== chatId || typeof p.title !== "string") return;
+        setChatTitle(p.title);
+      }
     });
   }, [client, chatId]);
 

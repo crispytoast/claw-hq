@@ -39,6 +39,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeChatProject, setActiveChatProject] = useState<string | null>(null);
+  const [activeChatTitle, setActiveChatTitle] = useState<string>("");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
@@ -122,8 +123,18 @@ export function ChatApp({ user, onLogout }: Props) {
   const handlePickChat = useCallback((chatId: string, projectSlug: string | null) => {
     setActiveChatId(chatId);
     setActiveChatProject(projectSlug);
+    setActiveChatTitle("");
     setPage("chat");
   }, []);
+
+  const handleChatTitle = useCallback((id: string, title: string) => {
+    setActiveChatTitle((prev) => (id === activeChatId ? title : prev));
+  }, [activeChatId]);
+
+  const handleChatDeleted = useCallback((deletedId: string) => {
+    setActiveChatId((curr) => (curr === deletedId ? null : curr));
+    setActiveChatProject((curr) => (activeChatId === deletedId ? null : curr));
+  }, [activeChatId]);
 
   const handleSelectPage = useCallback((next: SidebarPage) => {
     if (next === "settings") { setShowSettings(true); return; }
@@ -214,6 +225,7 @@ export function ChatApp({ user, onLogout }: Props) {
         onPickSession={handlePickSession}
         activeChatId={activeChatId}
         onPickChat={handlePickChat}
+        onChatDeleted={handleChatDeleted}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onLogout={onLogout}
@@ -239,7 +251,7 @@ export function ChatApp({ user, onLogout }: Props) {
           <div style={{ flex: 1, minWidth: 0, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {page === "chat"
               ? (activeChatId
-                  ? (activeChatProject ? `${activeChatProject} · chat` : "Chat")
+                  ? (activeChatTitle || (activeChatProject ? `${activeChatProject} · chat` : "Chat"))
                   : (activeSession?.label ?? "No session"))
               : null}
           </div>
@@ -255,6 +267,7 @@ export function ChatApp({ user, onLogout }: Props) {
                 chatId={activeChatId}
                 projectSlug={activeChatProject}
                 status={status}
+                onTitleChange={handleChatTitle}
               />
             ) : activeKey ? (
               <ChatPane

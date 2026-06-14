@@ -76,6 +76,7 @@ interface Props {
   onPickSession(key: string): void;
   activeChatId: string | null;
   onPickChat(chatId: string, projectSlug: string | null): void;
+  onChatDeleted?(chatId: string): void;
   mobileOpen: boolean;
   onMobileClose(): void;
   onLogout(): void | Promise<void>;
@@ -94,6 +95,7 @@ export function Sidebar({
   onPickSession,
   activeChatId,
   onPickChat,
+  onChatDeleted,
   mobileOpen,
   onMobileClose,
   onLogout,
@@ -114,6 +116,10 @@ export function Sidebar({
   const [projectChats, setProjectChats] = useState<Map<string, ChatSummary[]>>(new Map());
   const [projectChatsLoading, setProjectChatsLoading] = useState<Set<string>>(new Set());
   const [projectChatsErr, setProjectChatsErr] = useState<Map<string, string>>(new Map());
+  /** chatId whose row actions popover is open. */
+  const [actionsOpenForChat, setActionsOpenForChat] = useState<string | null>(null);
+  /** chatId currently being inline-renamed, with its draft title. */
+  const [renamingChat, setRenamingChat] = useState<{ chatId: string; draft: string } | null>(null);
 
   const loadProjects = useCallback(async () => {
     if (!client || status.kind !== "ready") return;
@@ -184,6 +190,63 @@ export function Sidebar({
     });
   }
 
+  const commitRename = useCallback(async () => {
+    if (!client || status.kind !== "ready" || !renamingChat) return;
+    const { chatId, draft } = renamingChat;
+    const title = draft.trim();
+    setRenamingChat(null);
+    if (!title) return;
+    try {
+      await client.call("clawhq.chats.rename", { chatId, title });
+      // Optimistic update; the broadcast will also land and idempotently re-apply.
+      setProjectChats((m) => {
+        const next = new Map(m);
+        for (const [slug, list] of m) {
+          const idx = list.findIndex((c) => c.id === chatId);
+          if (idx === -1) continue;
+          const updated: ChatSummary = { ...list[idx]!, title, updatedMs: Date.now() };
+          const reordered = [updated, ...list.slice(0, idx), ...list.slice(idx + 1)];
+          reordered.sort((a, b) => b.updatedMs - a.updatedMs);
+          next.set(slug, reordered);
+        }
+        return next;
+      });
+    } catch (err) {
+      console.warn("clawhq.chats.rename failed:", err);
+    }
+  }, [client, status.kind, renamingChat]);
+
+  const deleteChatRow = useCallback(
+    async (chatId: string, title: string) => {
+      if (!client || status.kind !== "ready") return;
+      const confirmed = window.confirm(`Delete "${title}"? This can't be undone.`);
+      if (!confirmed) return;
+      try {
+        await client.call("clawhq.chats.delete", { chatId });
+        setProjectChats((m) => {
+          const next = new Map(m);
+          for (const [slug, list] of m) {
+            const filtered = list.filter((c) => c.id !== chatId);
+            if (filtered.length !== list.length) next.set(slug, filtered);
+          }
+          return next;
+        });
+        if (onChatDeleted) onChatDeleted(chatId);
+      } catch (err) {
+        console.warn("clawhq.chats.delete failed:", err);
+      }
+    },
+    [client, status.kind, onChatDeleted],
+  );
+
+  // Close row-actions popover on any outside click.
+  useEffect(() => {
+    if (!actionsOpenForChat) return;
+    const onDocClick = () => setActionsOpenForChat(null);
+    window.addEventListener("click", onDocClick);
+    return () => window.removeEventListener("click", onDocClick);
+  }, [actionsOpenForChat]);
+
   async function createProjectChat(projectId: string) {
     if (!client || status.kind !== "ready") return;
     try {
@@ -208,41 +271,95 @@ export function Sidebar({
     if (page === "chat" || page === "sessions") setSessionsOpen(true);
   }, [page]);
 
-  // Cross-device live feed: when any device appends a message, bump the
-  // matching project's chat row in-place so message count + recency stay fresh
-  // without a round-trip.
+  // Cross-device live feed: rename/delete/create/append broadcasts keep the
+  // sidebar in sync with the other devices without round-trips.
   useEffect(() => {
     if (!client) return;
     return client.onEvent((ev) => {
-      if (ev.event !== "plugin.clawhq.chat.message") return;
-      const p = (ev.payload ?? {}) as {
-        chatId?: unknown;
-        projectSlug?: unknown;
-        updatedMs?: unknown;
-        messageCount?: unknown;
-      };
-      if (typeof p.chatId !== "string" || typeof p.projectSlug !== "string") return;
-      const projectSlug = p.projectSlug;
-      const chatId = p.chatId;
-      const updatedMs = typeof p.updatedMs === "number" ? p.updatedMs : Date.now();
-      const messageCount = typeof p.messageCount === "number" ? p.messageCount : undefined;
-      setProjectChats((m) => {
-        const list = m.get(projectSlug);
-        if (!list) return m;
-        const idx = list.findIndex((c) => c.id === chatId);
-        if (idx === -1) return m;
-        const existing = list[idx]!;
-        const updated: ChatSummary = {
-          ...existing,
-          updatedMs,
-          messageCount: messageCount ?? existing.messageCount,
+      if (ev.event === "plugin.clawhq.chat.message") {
+        const p = (ev.payload ?? {}) as {
+          chatId?: unknown;
+          projectSlug?: unknown;
+          updatedMs?: unknown;
+          messageCount?: unknown;
         };
-        const next = [updated, ...list.slice(0, idx), ...list.slice(idx + 1)];
-        next.sort((a, b) => b.updatedMs - a.updatedMs);
-        return new Map(m).set(projectSlug, next);
-      });
+        if (typeof p.chatId !== "string" || typeof p.projectSlug !== "string") return;
+        const projectSlug = p.projectSlug;
+        const chatId = p.chatId;
+        const updatedMs = typeof p.updatedMs === "number" ? p.updatedMs : Date.now();
+        const messageCount = typeof p.messageCount === "number" ? p.messageCount : undefined;
+        setProjectChats((m) => {
+          const list = m.get(projectSlug);
+          if (!list) return m;
+          const idx = list.findIndex((c) => c.id === chatId);
+          if (idx === -1) return m;
+          const existing = list[idx]!;
+          const updated: ChatSummary = {
+            ...existing,
+            updatedMs,
+            messageCount: messageCount ?? existing.messageCount,
+          };
+          const next = [updated, ...list.slice(0, idx), ...list.slice(idx + 1)];
+          next.sort((a, b) => b.updatedMs - a.updatedMs);
+          return new Map(m).set(projectSlug, next);
+        });
+        return;
+      }
+      if (ev.event === "plugin.clawhq.chat.renamed") {
+        const p = (ev.payload ?? {}) as {
+          chatId?: unknown;
+          projectSlug?: unknown;
+          title?: unknown;
+          updatedMs?: unknown;
+        };
+        if (typeof p.chatId !== "string" || typeof p.title !== "string") return;
+        const updatedMs = typeof p.updatedMs === "number" ? p.updatedMs : Date.now();
+        setProjectChats((m) => {
+          const next = new Map(m);
+          for (const [slug, list] of m) {
+            const idx = list.findIndex((c) => c.id === p.chatId);
+            if (idx === -1) continue;
+            const updated: ChatSummary = { ...list[idx]!, title: p.title as string, updatedMs };
+            const reordered = [updated, ...list.slice(0, idx), ...list.slice(idx + 1)];
+            reordered.sort((a, b) => b.updatedMs - a.updatedMs);
+            next.set(slug, reordered);
+          }
+          return next;
+        });
+        return;
+      }
+      if (ev.event === "plugin.clawhq.chat.deleted") {
+        const p = (ev.payload ?? {}) as { chatId?: unknown };
+        if (typeof p.chatId !== "string") return;
+        const chatId = p.chatId;
+        setProjectChats((m) => {
+          const next = new Map(m);
+          for (const [slug, list] of m) {
+            const filtered = list.filter((c) => c.id !== chatId);
+            if (filtered.length !== list.length) next.set(slug, filtered);
+          }
+          return next;
+        });
+        if (onChatDeleted) onChatDeleted(chatId);
+        return;
+      }
+      if (ev.event === "plugin.clawhq.chat.created") {
+        const p = (ev.payload ?? {}) as { chat?: unknown };
+        const chat = p.chat as ChatSummary | undefined;
+        if (!chat || typeof chat.id !== "string" || typeof chat.projectSlug !== "string") return;
+        const projectSlug = chat.projectSlug;
+        setProjectChats((m) => {
+          const list = m.get(projectSlug);
+          if (!list) return m;
+          if (list.some((c) => c.id === chat.id)) return m;
+          const next = [chat, ...list];
+          next.sort((a, b) => b.updatedMs - a.updatedMs);
+          return new Map(m).set(projectSlug, next);
+        });
+        return;
+      }
     });
-  }, [client]);
+  }, [client, onChatDeleted]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -461,26 +578,87 @@ export function Sidebar({
                               ) : chats && chats.length > 0 ? (
                                 chats.map((c) => {
                                   const isChatActive = activeChatId === c.id;
+                                  const isRenaming = renamingChat?.chatId === c.id;
+                                  const isActionsOpen = actionsOpenForChat === c.id;
                                   return (
-                                    <button
-                                      key={c.id}
-                                      type="button"
-                                      className={`cl-row cl-chat-row ${isChatActive ? "cl-active" : ""}`}
-                                      title={c.title}
-                                      onClick={() => {
-                                        onPickChat(c.id, c.projectSlug);
-                                        onMobileClose();
-                                      }}
-                                    >
-                                      <div className="cl-row-main">
-                                        <span className="cl-row-title">{c.title}</span>
-                                      </div>
-                                      <div className="cl-row-meta">
-                                        <span>{c.messageCount} msg</span>
-                                        <span>·</span>
-                                        <span>{relativeTime(c.updatedMs)}</span>
-                                      </div>
-                                    </button>
+                                    <div key={c.id} className="cl-chat-row-wrap" style={{ position: "relative" }}>
+                                      {isRenaming ? (
+                                        <div className={`cl-row cl-chat-row ${isChatActive ? "cl-active" : ""}`}>
+                                          <input
+                                            autoFocus
+                                            className="cl-rename-input"
+                                            value={renamingChat.draft}
+                                            onChange={(e) =>
+                                              setRenamingChat({ chatId: c.id, draft: e.target.value })
+                                            }
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                void commitRename();
+                                              } else if (e.key === "Escape") {
+                                                e.preventDefault();
+                                                setRenamingChat(null);
+                                              }
+                                            }}
+                                            onBlur={() => void commitRename()}
+                                          />
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className={`cl-row cl-chat-row ${isChatActive ? "cl-active" : ""}`}
+                                          title={c.title}
+                                          onClick={() => {
+                                            onPickChat(c.id, c.projectSlug);
+                                            onMobileClose();
+                                          }}
+                                        >
+                                          <div className="cl-row-main">
+                                            <span className="cl-row-title">{c.title}</span>
+                                          </div>
+                                          <div className="cl-row-meta">
+                                            <span>{c.messageCount} msg</span>
+                                            <span>·</span>
+                                            <span>{relativeTime(c.updatedMs)}</span>
+                                          </div>
+                                        </button>
+                                      )}
+                                      {!isRenaming && (
+                                        <button
+                                          type="button"
+                                          className="cl-chat-row-actions"
+                                          aria-label="Chat actions"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setActionsOpenForChat((curr) => (curr === c.id ? null : c.id));
+                                          }}
+                                        >⋮</button>
+                                      )}
+                                      {isActionsOpen && !isRenaming && (
+                                        <div
+                                          className="menu-popover cl-chat-actions-popover"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <button
+                                            onClick={() => {
+                                              setActionsOpenForChat(null);
+                                              setRenamingChat({ chatId: c.id, draft: c.title });
+                                            }}
+                                          >
+                                            Rename
+                                          </button>
+                                          <div className="sep" />
+                                          <button
+                                            onClick={() => {
+                                              setActionsOpenForChat(null);
+                                              void deleteChatRow(c.id, c.title);
+                                            }}
+                                          >
+                                            Delete
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
                                   );
                                 })
                               ) : chatsErr ? (

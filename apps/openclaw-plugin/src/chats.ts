@@ -172,14 +172,37 @@ export async function appendMessage(input: {
   });
 }
 
-export async function deleteChat(id: string): Promise<boolean> {
-  if (!VALID_CHAT_ID.test(id)) return false;
+export async function renameChat(input: {
+  chatId: string;
+  title: string;
+}): Promise<Chat | null> {
+  if (!VALID_CHAT_ID.test(input.chatId)) return null;
+  const title = (input.title ?? "").trim();
+  if (!title) return null;
+  return withChatLock(input.chatId, async () => {
+    const chat = await readChat(input.chatId);
+    if (!chat) return null;
+    chat.title = title.slice(0, 200);
+    await writeChatAtomic(chat);
+    return chat;
+  });
+}
+
+export interface DeleteResult {
+  chatId: string;
+  projectSlug: string | null;
+}
+
+export async function deleteChat(id: string): Promise<DeleteResult | null> {
+  if (!VALID_CHAT_ID.test(id)) return null;
   return withChatLock(id, async () => {
+    const chat = await readChat(id);
+    if (!chat) return null;
     try {
       await fs.unlink(chatPath(id));
-      return true;
+      return { chatId: chat.id, projectSlug: chat.projectSlug };
     } catch {
-      return false;
+      return null;
     }
   });
 }

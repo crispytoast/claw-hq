@@ -969,6 +969,50 @@ a:hover { text-decoration: underline; }
 }
 .cl-chat-row .cl-row-title { font-size: 0.85rem; }
 
+.cl-chat-row-wrap { position: relative; }
+.cl-chat-row-wrap .cl-chat-row { padding-right: 36px; }
+.cl-chat-row-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.cl-chat-row-wrap:hover .cl-chat-row-actions,
+.cl-chat-row-actions:focus,
+.cl-chat-row-actions:active { opacity: 1; }
+@media (hover: none) {
+  .cl-chat-row-actions { opacity: 1; }
+}
+.cl-chat-row-actions:hover { background: var(--bg-elev2); color: var(--accent); }
+.cl-chat-actions-popover {
+  top: 32px;
+  right: 4px;
+  left: auto;
+  min-width: 140px;
+}
+.cl-rename-input {
+  flex: 1;
+  background: var(--bg-elev2);
+  border: 1px solid var(--accent);
+  color: var(--foreground);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  outline: none;
+}
+
 .cl-static-nav { padding: 0 12px; display: flex; flex-direction: column; gap: 2px; }
 .cl-nav-item {
   display: flex;

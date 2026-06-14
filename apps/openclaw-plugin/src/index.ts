@@ -7,11 +7,12 @@ import {
   deleteChat,
   getChatHistory,
   listChats,
+  renameChat,
   type ChatRole,
 } from "./chats.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.4";
+const PLUGIN_VERSION = "0.0.5";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -296,6 +297,7 @@ export default definePluginEntry({
             "clawhq.chats.create",
             "clawhq.chats.history",
             "clawhq.chats.append",
+            "clawhq.chats.rename",
             "clawhq.chats.delete",
           ],
         });
@@ -374,7 +376,7 @@ export default definePluginEntry({
 
     api.registerGatewayMethod(
       "clawhq.chats.create",
-      async ({ respond, params }) => {
+      async ({ respond, params, context }) => {
         try {
           const p = (params ?? {}) as {
             projectSlug?: unknown;
@@ -385,6 +387,85 @@ export default definePluginEntry({
           const title = typeof p.title === "string" ? p.title : undefined;
           const chat = await createChat({ projectSlug, title });
           respond(true, { chat });
+          try {
+            context.broadcast("plugin.clawhq.chat.created", {
+              chat: {
+                id: chat.id,
+                projectSlug: chat.projectSlug,
+                title: chat.title,
+                createdMs: chat.createdMs,
+                updatedMs: chat.updatedMs,
+                messageCount: chat.messages.length,
+              },
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.chat.created broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.chats.rename",
+      async ({ respond, params, context }) => {
+        try {
+          const p = (params ?? {}) as { chatId?: unknown; title?: unknown };
+          if (typeof p.chatId !== "string" || !p.chatId) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: chatId",
+            });
+            return;
+          }
+          if (typeof p.title !== "string" || !p.title.trim()) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "title must be a non-empty string",
+            });
+            return;
+          }
+          const chat = await renameChat({ chatId: p.chatId, title: p.title });
+          if (!chat) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no chat: ${p.chatId}`,
+            });
+            return;
+          }
+          respond(true, {
+            chat: {
+              id: chat.id,
+              projectSlug: chat.projectSlug,
+              title: chat.title,
+              createdMs: chat.createdMs,
+              updatedMs: chat.updatedMs,
+              messageCount: chat.messages.length,
+            },
+          });
+          try {
+            context.broadcast("plugin.clawhq.chat.renamed", {
+              chatId: chat.id,
+              projectSlug: chat.projectSlug,
+              title: chat.title,
+              updatedMs: chat.updatedMs,
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.chat.renamed broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
         } catch (e) {
           respond(false, undefined, {
             code: "INTERNAL",
@@ -503,7 +584,7 @@ export default definePluginEntry({
 
     api.registerGatewayMethod(
       "clawhq.chats.delete",
-      async ({ respond, params }) => {
+      async ({ respond, params, context }) => {
         try {
           const p = (params ?? {}) as { chatId?: unknown };
           if (typeof p.chatId !== "string" || !p.chatId) {
@@ -522,6 +603,18 @@ export default definePluginEntry({
             return;
           }
           respond(true, { deleted: true });
+          try {
+            context.broadcast("plugin.clawhq.chat.deleted", {
+              chatId: deleted.chatId,
+              projectSlug: deleted.projectSlug,
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.chat.deleted broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
         } catch (e) {
           respond(false, undefined, {
             code: "INTERNAL",
