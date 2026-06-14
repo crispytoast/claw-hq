@@ -170,6 +170,12 @@ export class GatewayClient {
             protocol: p.protocol ?? 4,
             scopes: Array.isArray(p.scopes) ? p.scopes : [],
           });
+          // Subscribe to session lifecycle + tool events so chat surfaces can
+          // render tool-call collapsibles. Idempotent on the gateway side; the
+          // result is ignored. Errors are logged but not fatal.
+          this.call("sessions.subscribe", {}).catch((err) => {
+            console.warn("sessions.subscribe failed:", err);
+          });
           return;
         }
         if (frame.event === "claw.session_failed") {

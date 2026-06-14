@@ -87,6 +87,25 @@ interface DisplayMessage {
   streaming?: boolean;
 }
 
+interface DisplayTool {
+  toolCallId: string;
+  name: string;
+  args: unknown;
+  result?: unknown;
+  isError?: boolean;
+  status: "running" | "done" | "error";
+  startedMs: number;
+  doneMs?: number;
+}
+
+type DisplayItem =
+  | { kind: "message"; message: DisplayMessage }
+  | { kind: "tool"; tool: DisplayTool };
+
+function itemKey(item: DisplayItem): string {
+  return item.kind === "message" ? `m:${item.message.id}` : `t:${item.tool.toolCallId}`;
+}
+
 function newId(): string {
   return `m-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -149,7 +168,7 @@ async function buildMemoryPreamble(
 }
 
 export function ChatDetailView({ client, chatId, projectSlug, status, onTitleChange }: Props) {
-  const [messages, setMessages] = useState<DisplayMessage[]>([]);
+  const [items, setItems] = useState<DisplayItem[]>([]);
   const [chatTitle, setChatTitle] = useState<string>("");
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
@@ -210,19 +229,19 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     setAttachments((prev) => prev.filter((a) => a.localId !== localId));
   }, []);
 
-  // Auto-scroll to bottom on new messages.
+  // Auto-scroll to bottom on new items.
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [items]);
 
   // Load persisted chat history.
   useEffect(() => {
     if (status.kind !== "ready") return;
     let cancelled = false;
     setLoading(true);
-    setMessages([]);
+    setItems([]);
     setErr("");
     memoryInjectedRef.current = false;
     streamMapRef.current.clear();
@@ -235,12 +254,11 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         if (cancelled) return;
         const chat = result.chat;
         setChatTitle(chat.title);
-        const display: DisplayMessage[] = chat.messages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          text: m.content,
+        const display: DisplayItem[] = chat.messages.map((m) => ({
+          kind: "message" as const,
+          message: { id: m.id, role: m.role, text: m.content },
         }));
-        setMessages(display);
+        setItems(display);
         // If we already have prior turns, the agent session was primed before —
         // assume memory's already in context.
         if (chat.messages.some((m) => m.role === "user")) {
@@ -272,18 +290,24 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       const text = messageObj ? contentToText(messageObj.content) : "";
       if (role !== "assistant") return;
 
-      setMessages((prev) => {
+      setItems((prev) => {
         const bubbleId = runId ? streamMapRef.current.get(runId) : undefined;
         if (bubbleId) {
-          return prev.map((m) =>
-            m.id === bubbleId
-              ? { ...m, text, streaming: state !== "final" }
-              : m,
+          return prev.map((it) =>
+            it.kind === "message" && it.message.id === bubbleId
+              ? { kind: "message" as const, message: { ...it.message, text, streaming: state !== "final" } }
+              : it,
           );
         }
         const newBubbleId = newId();
         if (runId) streamMapRef.current.set(runId, newBubbleId);
-        return [...prev, { id: newBubbleId, role: "assistant", text, streaming: state !== "final" }];
+        return [
+          ...prev,
+          {
+            kind: "message" as const,
+            message: { id: newBubbleId, role: "assistant", text, streaming: state !== "final" },
+          },
+        ];
       });
 
       if (state === "final") {
@@ -310,6 +334,81 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     });
   }, [client, sessionKey, chatId, noteOwnPersist]);
 
+  // Tool call events for our sessionKey. We're already globally subscribed via
+  // gateway.ts on session_ready; here we just filter to this chat's session.
+  useEffect(() => {
+    return client.onEvent((ev: OpenClawEvent) => {
+      if (ev.event !== "session.tool") return;
+      const p = (ev.payload ?? {}) as Record<string, unknown>;
+      const evSessionKey = typeof p.sessionKey === "string" ? p.sessionKey : null;
+      if (evSessionKey && evSessionKey !== sessionKey) return;
+      const data = (p.data ?? {}) as Record<string, unknown>;
+      const phase = typeof data.phase === "string" ? data.phase : null;
+      const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : null;
+      if (!phase || !toolCallId) return;
+      const name = typeof data.name === "string" ? data.name : "tool";
+      const ts = typeof p.ts === "number" ? p.ts : Date.now();
+
+      if (phase === "start") {
+        const args = data.args;
+        setItems((prev) => {
+          if (prev.some((it) => it.kind === "tool" && it.tool.toolCallId === toolCallId)) {
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              kind: "tool",
+              tool: { toolCallId, name, args, status: "running", startedMs: ts },
+            },
+          ];
+        });
+        return;
+      }
+      if (phase === "result") {
+        const result = data.result;
+        const isError = data.isError === true;
+        setItems((prev) => {
+          const idx = prev.findIndex((it) => it.kind === "tool" && it.tool.toolCallId === toolCallId);
+          if (idx === -1) {
+            // Late result without a start (rare; surface anyway).
+            return [
+              ...prev,
+              {
+                kind: "tool",
+                tool: {
+                  toolCallId,
+                  name,
+                  args: undefined,
+                  result,
+                  isError,
+                  status: isError ? "error" : "done",
+                  startedMs: ts,
+                  doneMs: ts,
+                },
+              },
+            ];
+          }
+          const next = [...prev];
+          const existing = next[idx]!;
+          if (existing.kind !== "tool") return prev;
+          next[idx] = {
+            kind: "tool",
+            tool: {
+              ...existing.tool,
+              result,
+              isError,
+              status: isError ? "error" : "done",
+              doneMs: ts,
+            },
+          };
+          return next;
+        });
+        return;
+      }
+    });
+  }, [client, sessionKey]);
+
   // Cross-device live feed — broadcasts emitted by clawhq.chats.append on any
   // device land here. Skip our own echoes; otherwise append the new bubble.
   useEffect(() => {
@@ -325,11 +424,11 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         if (recentlyPersistedIdsRef.current.has(msg.id)) return;
         // Treat any inbound user turn as evidence the agent session is primed.
         if (msg.role === "user") memoryInjectedRef.current = true;
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === msg.id)) return prev;
+        setItems((prev) => {
+          if (prev.some((it) => it.kind === "message" && it.message.id === msg.id)) return prev;
           return [
             ...prev,
-            { id: msg.id, role: msg.role, text: msg.content },
+            { kind: "message" as const, message: { id: msg.id, role: msg.role, text: msg.content } },
           ];
         });
         return;
@@ -362,7 +461,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
 
     // Optimistic user bubble.
     const optimistic: DisplayMessage = { id: newId(), role: "user", text: displayText };
-    setMessages((prev) => [...prev, optimistic]);
+    setItems((prev) => [...prev, { kind: "message", message: optimistic }]);
 
     try {
       const appendResult = await client.call<{ message?: { id?: string } }>(
@@ -406,9 +505,12 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg);
-      setMessages((prev) => [
+      setItems((prev) => [
         ...prev,
-        { id: newId(), role: "system", text: `Send failed: ${msg}` },
+        {
+          kind: "message",
+          message: { id: newId(), role: "system", text: `Send failed: ${msg}` },
+        },
       ]);
       setPending(false);
     }
@@ -453,20 +555,26 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             Loading chat…
           </div>
         )}
-        {!loading && messages.length === 0 && status.kind === "ready" && (
+        {!loading && items.length === 0 && status.kind === "ready" && (
           <div className="empty">
             <div className="big">💬</div>
             Send your first message
             {projectSlug ? <> — project context for <code>{projectSlug}</code> will be attached.</> : null}
           </div>
         )}
-        {messages.map((m) => (
-          <div key={m.id} className={`bubble ${m.role}`}>
-            {m.role === "system" && <span className="role-tag">system</span>}
-            <BubbleContent text={m.text} />
-            {m.streaming && <span className="spinner" style={{ marginLeft: "0.5rem" }} />}
-          </div>
-        ))}
+        {items.map((it) => {
+          if (it.kind === "tool") {
+            return <ToolBlock key={itemKey(it)} tool={it.tool} />;
+          }
+          const m = it.message;
+          return (
+            <div key={itemKey(it)} className={`bubble ${m.role}`}>
+              {m.role === "system" && <span className="role-tag">system</span>}
+              <BubbleContent text={m.text} />
+              {m.streaming && <span className="spinner" style={{ marginLeft: "0.5rem" }} />}
+            </div>
+          );
+        })}
         {err && <div className="bubble system">{err}</div>}
         {dragOver && (
           <div className="drop-overlay">Drop to attach</div>
@@ -545,6 +653,82 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         </div>
       </div>
     </>
+  );
+}
+
+function formatToolValue(v: unknown): string {
+  if (v === undefined || v === null) return "";
+  if (typeof v === "string") return v;
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
+function ToolBlock({ tool }: { tool: DisplayTool }) {
+  const [open, setOpen] = useState(false);
+  const statusClass =
+    tool.status === "done" ? "ok" : tool.status === "error" ? "bad" : "warn";
+  const statusLabel =
+    tool.status === "running" ? "running" : tool.status === "error" ? "error" : "done";
+  const subtitle = useMemo(() => {
+    if (typeof tool.args === "object" && tool.args !== null) {
+      // Surface the most common single-arg shape: { command, description }, etc.
+      const a = tool.args as Record<string, unknown>;
+      const cmd =
+        typeof a.command === "string" ? a.command
+        : typeof a.query === "string" ? a.query
+        : typeof a.file_path === "string" ? a.file_path
+        : typeof a.url === "string" ? a.url
+        : typeof a.description === "string" ? a.description
+        : null;
+      if (cmd) return cmd.length > 80 ? `${cmd.slice(0, 77)}…` : cmd;
+    }
+    return null;
+  }, [tool.args]);
+  const argsText = formatToolValue(tool.args);
+  const resultText = formatToolValue(tool.result);
+  const RESULT_INLINE_CAP = 4000;
+  const truncated = resultText.length > RESULT_INLINE_CAP;
+  return (
+    <div className={`tool-block ${tool.status}`}>
+      <button
+        type="button"
+        className="tool-block-header"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="tool-block-chevron">{open ? "▾" : "▸"}</span>
+        <span className="tool-block-icon">🔧</span>
+        <span className="tool-block-name">{tool.name}</span>
+        {subtitle && <span className="tool-block-subtitle">{subtitle}</span>}
+        <span className={`status-pill ${statusClass}`}>
+          <span className="status-dot" />
+          {statusLabel}
+        </span>
+      </button>
+      {open && (
+        <div className="tool-block-body">
+          {argsText && (
+            <>
+              <div className="tool-block-label">args</div>
+              <pre className="tool-block-pre">{argsText}</pre>
+            </>
+          )}
+          {tool.status !== "running" && (
+            <>
+              <div className="tool-block-label">
+                {tool.isError ? "error" : "result"}
+              </div>
+              <pre className={`tool-block-pre ${tool.isError ? "tool-block-pre-error" : ""}`}>
+                {truncated ? `${resultText.slice(0, RESULT_INLINE_CAP)}\n\n…[${resultText.length - RESULT_INLINE_CAP} more chars truncated]` : resultText || "(empty)"}
+              </pre>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
