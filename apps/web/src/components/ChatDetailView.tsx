@@ -228,7 +228,18 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   const [uploading, setUploading] = useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const sessionKey = useMemo(() => sessionKeyFor(chatId), [chatId]);
+
+  // Voice STT — driven by window.ClawHqVoiceBridge (Android-only). voiceAnchor
+  // is the start offset in `input` where the live partial begins; everything
+  // typed before mic-on is preserved. Same pattern as PM HQ's chat composer.
+  const [listening, setListening] = useState(false);
+  const voiceAnchorRef = useRef<number | null>(null);
+  const inputRef = useRef("");
+  inputRef.current = input;
+  const voiceAvailable = typeof window !== "undefined"
+    && typeof (window as unknown as { ClawHqVoiceBridge?: unknown }).ClawHqVoiceBridge !== "undefined";
 
   const noteOwnPersist = useCallback((id: string) => {
     recentlyPersistedIdsRef.current.add(id);
@@ -301,6 +312,89 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       previewUrlsRef.current.clear();
     };
   }, []);
+
+  // Voice bridge callback hookup. The Android side calls
+  // window.__clawHqVoiceCallback(JSON) so we register one stable handler that
+  // routes by `type`. Re-registered when chatId changes so a stale chat's
+  // textarea doesn't keep eating partials.
+  useEffect(() => {
+    if (!voiceAvailable) return;
+    interface VoicePayload {
+      type: "ready" | "partial" | "final" | "error" | "stopped" | "permission";
+      text?: string;
+      granted?: boolean;
+    }
+    const handler = (raw: string) => {
+      let payload: VoicePayload;
+      try { payload = JSON.parse(raw) as VoicePayload; } catch { return; }
+      if (payload.type === "ready") return;
+      if (payload.type === "stopped") return;
+      if (payload.type === "permission") {
+        if (payload.granted) {
+          // Retry start now that the user granted the prompt.
+          try {
+            const bridge = (window as unknown as {
+              ClawHqVoiceBridge?: { start(): boolean };
+            }).ClawHqVoiceBridge;
+            const ok = bridge?.start() ?? false;
+            if (ok) setListening(true);
+          } catch (e) { console.warn("voice start after permission failed:", e); }
+        }
+        return;
+      }
+      if (payload.type === "error") {
+        setListening(false);
+        voiceAnchorRef.current = null;
+        if (payload.text) console.warn("voice:", payload.text);
+        return;
+      }
+      // partial or final — splice the heard text into `input` from voiceAnchor on.
+      const text = typeof payload.text === "string" ? payload.text : "";
+      if (voiceAnchorRef.current === null) {
+        voiceAnchorRef.current = inputRef.current.length;
+      }
+      const anchor = voiceAnchorRef.current;
+      const prefix = inputRef.current.slice(0, anchor);
+      const merged = prefix.length > 0 && text.length > 0 && !prefix.endsWith(" ")
+        ? `${prefix} ${text}`
+        : `${prefix}${text}`;
+      setInput(merged);
+      if (payload.type === "final") {
+        // Final flush — keep anchor where it is so the user can keep talking
+        // on the next start without losing the typed prefix; recognizer will
+        // restart in continuous mode if listening is still true.
+      }
+    };
+    (window as unknown as Record<string, unknown>)["__clawHqVoiceCallback"] = handler;
+    return () => {
+      if ((window as unknown as Record<string, unknown>)["__clawHqVoiceCallback"] === handler) {
+        delete (window as unknown as Record<string, unknown>)["__clawHqVoiceCallback"];
+      }
+    };
+  }, [voiceAvailable, chatId]);
+
+  const toggleVoice = useCallback(() => {
+    if (!voiceAvailable) return;
+    const bridge = (window as unknown as {
+      ClawHqVoiceBridge?: { start(): boolean; stop(): void };
+    }).ClawHqVoiceBridge;
+    if (!bridge) return;
+    if (listening) {
+      try { bridge.stop(); } catch (e) { console.warn("voice stop failed:", e); }
+      setListening(false);
+      voiceAnchorRef.current = null;
+      return;
+    }
+    // Capture current cursor position so partials only replace the voice region.
+    const ta = textareaRef.current;
+    voiceAnchorRef.current = ta?.selectionStart ?? inputRef.current.length;
+    try {
+      const ok = bridge.start();
+      if (ok) setListening(true);
+      // If start returned false, it's awaiting a permission prompt; the
+      // permission callback will retry.
+    } catch (e) { console.warn("voice start failed:", e); }
+  }, [voiceAvailable, listening]);
 
   // Track whether we've consumed the initial search query for THIS chat load.
   // Once we've scrolled to the first match (or confirmed there isn't one), we
@@ -780,6 +874,18 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     const pendingAttachments = attachments;
     if (!text && pendingAttachments.length === 0) return;
     if (status.kind !== "ready" || pending) return;
+    // If voice was streaming partials when the user hit send, stop the
+    // recognizer so it doesn't append the next utterance into the next chat.
+    if (listening) {
+      try {
+        const bridge = (window as unknown as {
+          ClawHqVoiceBridge?: { stop(): void };
+        }).ClawHqVoiceBridge;
+        bridge?.stop();
+      } catch (e) { console.warn("voice stop on send failed:", e); }
+      setListening(false);
+      voiceAnchorRef.current = null;
+    }
     setInput("");
     setErr("");
     setPending(true);
@@ -849,7 +955,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       ]);
       setPending(false);
     }
-  }, [client, chatId, projectSlug, sessionKey, input, attachments, status.kind, pending, noteOwnPersist, revokePreviewUrl]);
+  }, [client, chatId, projectSlug, sessionKey, input, attachments, status.kind, pending, noteOwnPersist, revokePreviewUrl, listening]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -972,6 +1078,16 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           </div>
         )}
         <div className="row">
+          {voiceAvailable && (
+            <button
+              type="button"
+              className={`composer-mic ${listening ? "listening" : ""}`}
+              aria-label={listening ? "Stop voice input" : "Start voice input"}
+              title={listening ? "Stop voice input" : "Voice input"}
+              disabled={status.kind !== "ready" || pending}
+              onClick={toggleVoice}
+            >🎤</button>
+          )}
           <button
             type="button"
             className="composer-attach"
@@ -991,8 +1107,15 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             }}
           />
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              // If the user is editing manually while listening, drop the
+              // voice anchor so the next partial starts a fresh region after
+              // the current cursor.
+              if (listening) voiceAnchorRef.current = e.target.selectionStart;
+              setInput(e.target.value);
+            }}
             onKeyDown={onKeyDown}
             placeholder={
               status.kind === "ready"

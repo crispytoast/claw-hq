@@ -34,6 +34,7 @@ import android.widget.TextView
 class MainActivity : Activity() {
 
     private var webView: WebView? = null
+    private var voiceBridge: VoiceBridge? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,6 +75,10 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#1B1B1B"))
         }
         webView = wv
+        // window.ClawHqVoiceBridge — drives SpeechRecognizer from the SPA.
+        val bridge = VoiceBridge(this, wv)
+        voiceBridge = bridge
+        wv.addJavascriptInterface(bridge, "ClawHqVoiceBridge")
         setContentView(wv)
         wv.loadUrl(relayUrl)
     }
@@ -251,6 +256,31 @@ class MainActivity : Activity() {
         } else {
             @Suppress("DEPRECATION")
             super.onBackPressed()
+        }
+    }
+
+    override fun onDestroy() {
+        voiceBridge?.destroy()
+        voiceBridge = null
+        super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // Notify the SPA when the mic permission resolves so it can retry start()
+        // without the user having to tap the mic button again.
+        if (requestCode == 1002) {
+            val granted = grantResults.isNotEmpty()
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            val payload = "{\"type\":\"permission\",\"granted\":$granted}"
+            webView?.evaluateJavascript(
+                "window.__clawHqVoiceCallback && window.__clawHqVoiceCallback(${org.json.JSONObject.quote(payload)})",
+                null,
+            )
         }
     }
 
