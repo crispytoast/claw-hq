@@ -12,9 +12,15 @@ import {
   type ChatRole,
 } from "./chats.js";
 import { toggleTask } from "./tasks.js";
+import {
+  deleteMemoryFile,
+  getMemoryFile,
+  listMemoryFiles,
+  putMemoryFile,
+} from "./memory.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.8";
+const PLUGIN_VERSION = "0.0.9";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -350,6 +356,10 @@ export default definePluginEntry({
             "clawhq.chats.delete",
             "clawhq.chats.search",
             "clawhq.tasks.toggle",
+            "clawhq.memory.list",
+            "clawhq.memory.get",
+            "clawhq.memory.put",
+            "clawhq.memory.delete",
           ],
         });
       },
@@ -825,6 +835,246 @@ export default definePluginEntry({
           } catch (e) {
             api.logger.warn(
               `plugin.clawhq.chat.deleted broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.memory.list",
+      async ({ respond, params }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const p = (params ?? {}) as { projectSlug?: unknown };
+          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: projectSlug",
+            });
+            return;
+          }
+          const files = await listMemoryFiles({
+            workspaceRoot,
+            projectSlug: p.projectSlug,
+          });
+          if (!files) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: `invalid projectSlug: ${p.projectSlug}`,
+            });
+            return;
+          }
+          respond(true, { projectSlug: p.projectSlug, files });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.memory.get",
+      async ({ respond, params }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const p = (params ?? {}) as {
+            projectSlug?: unknown;
+            name?: unknown;
+          };
+          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: projectSlug",
+            });
+            return;
+          }
+          if (typeof p.name !== "string" || !p.name) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: name",
+            });
+            return;
+          }
+          const file = await getMemoryFile({
+            workspaceRoot,
+            projectSlug: p.projectSlug,
+            name: p.name,
+          });
+          if (!file) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no memory file: ${p.projectSlug}/${p.name}`,
+            });
+            return;
+          }
+          respond(true, { projectSlug: p.projectSlug, file });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.memory.put",
+      async ({ respond, params, context }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const p = (params ?? {}) as {
+            projectSlug?: unknown;
+            name?: unknown;
+            content?: unknown;
+          };
+          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: projectSlug",
+            });
+            return;
+          }
+          if (typeof p.name !== "string" || !p.name) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: name",
+            });
+            return;
+          }
+          if (typeof p.content !== "string") {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "content must be a string",
+            });
+            return;
+          }
+          const result = await putMemoryFile({
+            workspaceRoot,
+            projectSlug: p.projectSlug,
+            name: p.name,
+            content: p.content,
+          });
+          if (result === "TOO_LARGE") {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "content exceeds 1MB limit",
+            });
+            return;
+          }
+          if (!result) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: `invalid projectSlug or filename: ${p.projectSlug}/${p.name}`,
+            });
+            return;
+          }
+          respond(true, { projectSlug: p.projectSlug, file: result });
+          try {
+            context.broadcast("plugin.clawhq.memory.updated", {
+              projectSlug: p.projectSlug,
+              name: result.name,
+              size: result.size,
+              updatedMs: result.updatedMs,
+              created: result.created,
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.memory.updated broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.memory.delete",
+      async ({ respond, params, context }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const p = (params ?? {}) as {
+            projectSlug?: unknown;
+            name?: unknown;
+          };
+          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: projectSlug",
+            });
+            return;
+          }
+          if (typeof p.name !== "string" || !p.name) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: name",
+            });
+            return;
+          }
+          const result = await deleteMemoryFile({
+            workspaceRoot,
+            projectSlug: p.projectSlug,
+            name: p.name,
+          });
+          if (!result) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no memory file: ${p.projectSlug}/${p.name}`,
+            });
+            return;
+          }
+          respond(true, { deleted: true });
+          try {
+            context.broadcast("plugin.clawhq.memory.deleted", {
+              projectSlug: p.projectSlug,
+              name: p.name,
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.memory.deleted broadcast failed: ${
                 e instanceof Error ? e.message : String(e)
               }`,
             );

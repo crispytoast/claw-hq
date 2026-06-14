@@ -101,6 +101,8 @@ interface Props {
   onChatDeleted?(chatId: string): void;
   activeProjectSlug: string | null;
   onPickProject(slug: string): void;
+  activeMemoryProject: string | null;
+  onPickProjectMemory(slug: string): void;
   mobileOpen: boolean;
   onMobileClose(): void;
   onLogout(): void | Promise<void>;
@@ -122,6 +124,8 @@ export function Sidebar({
   onChatDeleted,
   activeProjectSlug,
   onPickProject,
+  activeMemoryProject,
+  onPickProjectMemory,
   mobileOpen,
   onMobileClose,
   onLogout,
@@ -684,13 +688,14 @@ export function Sidebar({
                       const chatsLoading = projectChatsLoading.has(p.id);
                       const chatsErr = projectChatsErr.get(p.id);
                       const isProjectActive = activeProjectSlug === p.id;
+                      const isMemoryActive = activeMemoryProject === p.id;
                       return (
                         <div key={p.id} className="cl-project-block" style={{ position: "relative" }}>
                           <button
                             type="button"
-                            className={`cl-row ${isProjectActive ? "cl-active" : ""}`}
+                            className={`cl-row ${isProjectActive || isMemoryActive ? "cl-active" : ""}`}
                             title={p.blurb || p.name}
-                            style={{ paddingRight: 60 }}
+                            style={{ paddingRight: 96 }}
                             onClick={() => toggleProject(p.id)}
                           >
                             <div className="cl-row-main">
@@ -722,6 +727,17 @@ export function Sidebar({
                               onMobileClose();
                             }}
                           >📋</button>
+                          <button
+                            type="button"
+                            className="cl-project-memory"
+                            aria-label={`Open ${p.name} memory editor`}
+                            title="Edit project memory"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onPickProjectMemory(p.id);
+                              onMobileClose();
+                            }}
+                          >🧠</button>
                           {isExpanded && (
                             <div className="cl-project-chats">
                               <button

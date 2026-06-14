@@ -1108,6 +1108,108 @@ a:hover { text-decoration: underline; }
 }
 .cl-project-open:hover { background: var(--bg-elev2); color: var(--accent); }
 
+.cl-project-memory {
+  position: absolute;
+  top: 6px;
+  right: 40px;
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+.cl-project-memory:hover { background: var(--bg-elev2); color: var(--accent); }
+
+.memory-editor {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+.memory-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+}
+.memory-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+.memory-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.memory-pane-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-pane-meta {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.memory-pane-actions { display: flex; gap: 6px; }
+.memory-textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 320px;
+  background: var(--bg-elev1);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+.memory-textarea:focus { border-color: var(--accent); }
+.memory-new-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+}
+.memory-error {
+  color: #ff6b6b;
+  font-size: 0.8rem;
+}
+@media (max-width: 720px) {
+  .memory-editor {
+    grid-template-columns: 1fr;
+  }
+  .memory-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding-right: 0;
+    padding-bottom: 12px;
+    max-height: 260px;
+  }
+}
+
 .cl-search-wrap {
   position: relative;
   padding: 0 4px 6px;

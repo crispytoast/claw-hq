@@ -5,6 +5,7 @@ import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { ChatPane } from "./ChatPane.js";
 import { ChatDetailView } from "./ChatDetailView.js";
 import { ProjectPage } from "./pages/ProjectPage.js";
+import { MemoryEditorPage } from "./pages/MemoryEditorPage.js";
 import { Settings } from "./Settings.js";
 import { NotificationsInbox } from "./NotificationsInbox.js";
 import { Sidebar, type SidebarPage } from "./Sidebar.js";
@@ -42,6 +43,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [activeChatProject, setActiveChatProject] = useState<string | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState<string>("");
   const [activeProjectSlug, setActiveProjectSlug] = useState<string | null>(null);
+  const [activeMemoryProject, setActiveMemoryProject] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
@@ -120,6 +122,7 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveChatId(null);
     setActiveChatProject(null);
     setActiveProjectSlug(null);
+    setActiveMemoryProject(null);
     setPage("chat");
   }, []);
 
@@ -128,11 +131,22 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveChatProject(projectSlug);
     setActiveChatTitle("");
     setActiveProjectSlug(null);
+    setActiveMemoryProject(null);
     setPage("chat");
   }, []);
 
   const handlePickProject = useCallback((slug: string) => {
     setActiveProjectSlug(slug);
+    setActiveChatId(null);
+    setActiveChatProject(null);
+    setActiveChatTitle("");
+    setActiveMemoryProject(null);
+    setPage("chat");
+  }, []);
+
+  const handlePickProjectMemory = useCallback((slug: string) => {
+    setActiveMemoryProject(slug);
+    setActiveProjectSlug(null);
     setActiveChatId(null);
     setActiveChatProject(null);
     setActiveChatTitle("");
@@ -240,6 +254,8 @@ export function ChatApp({ user, onLogout }: Props) {
         onChatDeleted={handleChatDeleted}
         activeProjectSlug={activeProjectSlug}
         onPickProject={handlePickProject}
+        activeMemoryProject={activeMemoryProject}
+        onPickProjectMemory={handlePickProjectMemory}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onLogout={onLogout}
@@ -266,6 +282,8 @@ export function ChatApp({ user, onLogout }: Props) {
             {page === "chat"
               ? (activeProjectSlug
                   ? `${activeProjectSlug} · project`
+                  : activeMemoryProject
+                    ? `${activeMemoryProject} · memory`
                   : activeChatId
                     ? (activeChatTitle || (activeChatProject ? `${activeChatProject} · chat` : "Chat"))
                     : (activeSession?.label ?? "No session"))
@@ -276,7 +294,14 @@ export function ChatApp({ user, onLogout }: Props) {
 
         {page === "chat" && (
           clientRef.current ? (
-            activeProjectSlug ? (
+            activeMemoryProject ? (
+              <MemoryEditorPage
+                key={`memory:${activeMemoryProject}`}
+                client={clientRef.current}
+                status={status}
+                projectSlug={activeMemoryProject}
+              />
+            ) : activeProjectSlug ? (
               <ProjectPage
                 key={`project:${activeProjectSlug}`}
                 client={clientRef.current}
