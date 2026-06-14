@@ -106,7 +106,14 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   const streamMapRef = useRef<Map<string, string>>(new Map());
   /** Set after we successfully append a memory preamble, so we don't re-inject. */
   const memoryInjectedRef = useRef(false);
+  /** Message ids we just persisted via clawhq.chats.append; lets us drop our own broadcast echo. */
+  const recentlyPersistedIdsRef = useRef<Set<string>>(new Set());
   const sessionKey = useMemo(() => sessionKeyFor(chatId), [chatId]);
+
+  const noteOwnPersist = useCallback((id: string) => {
+    recentlyPersistedIdsRef.current.add(id);
+    setTimeout(() => recentlyPersistedIdsRef.current.delete(id), 10_000);
+  }, []);
 
   // Auto-scroll to bottom on new messages.
   useEffect(() => {
@@ -189,10 +196,13 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         // Persist the final assistant text so it survives reload.
         if (text) {
           void client
-            .call("clawhq.chats.append", {
+            .call<{ message?: { id?: string } }>("clawhq.chats.append", {
               chatId,
               role: "assistant",
               content: text,
+            })
+            .then((result) => {
+              if (result?.message?.id) noteOwnPersist(result.message.id);
             })
             .catch((e) => {
               console.warn("clawhq.chats.append (assistant) failed:", e);
@@ -203,7 +213,32 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         }
       }
     });
-  }, [client, sessionKey, chatId]);
+  }, [client, sessionKey, chatId, noteOwnPersist]);
+
+  // Cross-device live feed — broadcasts emitted by clawhq.chats.append on any
+  // device land here. Skip our own echoes; otherwise append the new bubble.
+  useEffect(() => {
+    return client.onEvent((ev: OpenClawEvent) => {
+      if (ev.event !== "plugin.clawhq.chat.message") return;
+      const p = (ev.payload ?? {}) as {
+        chatId?: unknown;
+        message?: unknown;
+      };
+      if (p.chatId !== chatId) return;
+      const msg = p.message as PersistedMessage | undefined;
+      if (!msg || typeof msg.id !== "string") return;
+      if (recentlyPersistedIdsRef.current.has(msg.id)) return;
+      // Treat any inbound user turn as evidence the agent session is primed.
+      if (msg.role === "user") memoryInjectedRef.current = true;
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [
+          ...prev,
+          { id: msg.id, role: msg.role, text: msg.content },
+        ];
+      });
+    });
+  }, [client, chatId]);
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();
@@ -218,11 +253,11 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
 
     try {
       // 1) Persist user turn.
-      await client.call("clawhq.chats.append", {
-        chatId,
-        role: "user",
-        content: text,
-      });
+      const appendResult = await client.call<{ message?: { id?: string } }>(
+        "clawhq.chats.append",
+        { chatId, role: "user", content: text },
+      );
+      if (appendResult?.message?.id) noteOwnPersist(appendResult.message.id);
 
       // 2) On the first user turn (this page session), prepend project memory
       //    so OpenClaw answers with full project context. Subsequent turns rely
@@ -251,7 +286,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       ]);
       setPending(false);
     }
-  }, [client, chatId, projectSlug, sessionKey, input, status.kind, pending]);
+  }, [client, chatId, projectSlug, sessionKey, input, status.kind, pending, noteOwnPersist]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

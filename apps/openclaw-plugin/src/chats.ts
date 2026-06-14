@@ -137,11 +137,18 @@ export async function getChatHistory(id: string): Promise<Chat | null> {
   return readChat(id);
 }
 
+export interface AppendResult {
+  message: ChatMessage;
+  projectSlug: string | null;
+  updatedMs: number;
+  messageCount: number;
+}
+
 export async function appendMessage(input: {
   chatId: string;
   role: ChatRole;
   content: string;
-}): Promise<ChatMessage | null> {
+}): Promise<AppendResult | null> {
   if (!VALID_CHAT_ID.test(input.chatId)) return null;
   if (!["user", "assistant", "system"].includes(input.role)) return null;
   const content = (input.content ?? "").toString();
@@ -156,7 +163,12 @@ export async function appendMessage(input: {
     };
     chat.messages.push(message);
     await writeChatAtomic(chat);
-    return message;
+    return {
+      message,
+      projectSlug: chat.projectSlug,
+      updatedMs: chat.updatedMs,
+      messageCount: chat.messages.length,
+    };
   });
 }
 

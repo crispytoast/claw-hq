@@ -208,6 +208,42 @@ export function Sidebar({
     if (page === "chat" || page === "sessions") setSessionsOpen(true);
   }, [page]);
 
+  // Cross-device live feed: when any device appends a message, bump the
+  // matching project's chat row in-place so message count + recency stay fresh
+  // without a round-trip.
+  useEffect(() => {
+    if (!client) return;
+    return client.onEvent((ev) => {
+      if (ev.event !== "plugin.clawhq.chat.message") return;
+      const p = (ev.payload ?? {}) as {
+        chatId?: unknown;
+        projectSlug?: unknown;
+        updatedMs?: unknown;
+        messageCount?: unknown;
+      };
+      if (typeof p.chatId !== "string" || typeof p.projectSlug !== "string") return;
+      const projectSlug = p.projectSlug;
+      const chatId = p.chatId;
+      const updatedMs = typeof p.updatedMs === "number" ? p.updatedMs : Date.now();
+      const messageCount = typeof p.messageCount === "number" ? p.messageCount : undefined;
+      setProjectChats((m) => {
+        const list = m.get(projectSlug);
+        if (!list) return m;
+        const idx = list.findIndex((c) => c.id === chatId);
+        if (idx === -1) return m;
+        const existing = list[idx]!;
+        const updated: ChatSummary = {
+          ...existing,
+          updatedMs,
+          messageCount: messageCount ?? existing.messageCount,
+        };
+        const next = [updated, ...list.slice(0, idx), ...list.slice(idx + 1)];
+        next.sort((a, b) => b.updatedMs - a.updatedMs);
+        return new Map(m).set(projectSlug, next);
+      });
+    });
+  }, [client]);
+
   useEffect(() => {
     if (!menuOpen) return;
     const onDocClick = () => setMenuOpen(false);

@@ -11,7 +11,7 @@ import {
 } from "./chats.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.3";
+const PLUGIN_VERSION = "0.0.4";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -428,7 +428,7 @@ export default definePluginEntry({
 
     api.registerGatewayMethod(
       "clawhq.chats.append",
-      async ({ respond, params }) => {
+      async ({ respond, params, context }) => {
         try {
           const p = (params ?? {}) as {
             chatId?: unknown;
@@ -459,19 +459,38 @@ export default definePluginEntry({
             });
             return;
           }
-          const message = await appendMessage({
+          const result = await appendMessage({
             chatId: p.chatId,
             role: p.role as ChatRole,
             content: p.content,
           });
-          if (!message) {
+          if (!result) {
             respond(false, undefined, {
               code: "NOT_FOUND",
               message: `no chat: ${p.chatId}`,
             });
             return;
           }
-          respond(true, { message });
+          respond(true, { message: result.message });
+          // Fan out to every connected operator client so other devices viewing
+          // the same chat (or the same project's chat list) update live. The
+          // `plugin.*` prefix is required: the gateway broadcaster drops events
+          // outside its scope-guard table unless they're plugin-namespaced.
+          try {
+            context.broadcast("plugin.clawhq.chat.message", {
+              chatId: p.chatId,
+              projectSlug: result.projectSlug,
+              message: result.message,
+              updatedMs: result.updatedMs,
+              messageCount: result.messageCount,
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.chat.message broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
         } catch (e) {
           respond(false, undefined, {
             code: "INTERNAL",
