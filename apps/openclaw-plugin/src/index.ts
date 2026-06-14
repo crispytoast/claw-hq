@@ -21,24 +21,28 @@ export default definePluginEntry({
       `clawhq plugin loaded (version=${PLUGIN_VERSION}, workspaceRoot=${workspaceRoot ?? "<unset>"})`,
     );
 
-    api.registerGatewayMethod("clawhq.health", ({ respond }) => {
-      respond(true, {
-        plugin: PLUGIN_ID,
-        version: PLUGIN_VERSION,
-        workspaceRoot,
-        surfaces: [
-          "projects.list",
-          "projects.get",
-          "chats.list",
-          "chats.history",
-          "chats.append",
-          "subprojects.tasks.toggle",
-          "uploads.put",
-          "memory.read",
-          "memory.write",
-          "events.subscribe",
-        ].map((id) => ({ id, status: "planned" })),
-      });
-    });
+    api.registerGatewayMethod(
+      "clawhq.health",
+      ({ respond }) => {
+        respond(true, {
+          plugin: PLUGIN_ID,
+          version: PLUGIN_VERSION,
+          workspaceRoot,
+          surfaces: [
+            "projects.list",
+            "projects.get",
+            "chats.list",
+            "chats.history",
+            "chats.append",
+            "subprojects.tasks.toggle",
+            "uploads.put",
+            "memory.read",
+            "memory.write",
+            "events.subscribe",
+          ].map((id) => ({ id, status: "planned" })),
+        });
+      },
+      { scope: "operator.read" },
+    );
   },
 });
