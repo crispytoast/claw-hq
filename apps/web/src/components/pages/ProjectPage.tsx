@@ -7,6 +7,8 @@ interface Props {
   client: GatewayClient | null;
   status: ConnectionStatus;
   projectSlug: string;
+  /** When set, opens directly to this subproject instead of the project home. */
+  initialSubSlug?: string | null;
 }
 
 interface ProjectSummary {
@@ -98,8 +100,8 @@ function subprojectStatusClass(s: SubprojectSummary["status"]): string {
   return "bad";
 }
 
-export function ProjectPage({ client, status, projectSlug }: Props) {
-  const [activeSub, setActiveSub] = useState<string | null>(null);
+export function ProjectPage({ client, status, projectSlug, initialSubSlug }: Props) {
+  const [activeSub, setActiveSub] = useState<string | null>(initialSubSlug ?? null);
   const [view, setView] = useState<View | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

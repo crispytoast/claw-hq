@@ -6,6 +6,7 @@ import { ChatPane } from "./ChatPane.js";
 import { ChatDetailView } from "./ChatDetailView.js";
 import { ProjectPage } from "./pages/ProjectPage.js";
 import { MemoryEditorPage } from "./pages/MemoryEditorPage.js";
+import { SubprojectsPage } from "./pages/SubprojectsPage.js";
 import { Settings } from "./Settings.js";
 import { NotificationsInbox } from "./NotificationsInbox.js";
 import { Sidebar, type SidebarPage } from "./Sidebar.js";
@@ -44,6 +45,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [activeChatTitle, setActiveChatTitle] = useState<string>("");
   const [chatSearchQuery, setChatSearchQuery] = useState<string | null>(null);
   const [activeProjectSlug, setActiveProjectSlug] = useState<string | null>(null);
+  const [activeProjectSub, setActiveProjectSub] = useState<string | null>(null);
   const [activeMemoryProject, setActiveMemoryProject] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -139,6 +141,17 @@ export function ChatApp({ user, onLogout }: Props) {
 
   const handlePickProject = useCallback((slug: string) => {
     setActiveProjectSlug(slug);
+    setActiveProjectSub(null);
+    setActiveChatId(null);
+    setActiveChatProject(null);
+    setActiveChatTitle("");
+    setActiveMemoryProject(null);
+    setPage("chat");
+  }, []);
+
+  const handleOpenSubproject = useCallback((parentSlug: string, subSlug: string) => {
+    setActiveProjectSlug(parentSlug);
+    setActiveProjectSub(subSlug);
     setActiveChatId(null);
     setActiveChatProject(null);
     setActiveChatTitle("");
@@ -305,10 +318,11 @@ export function ChatApp({ user, onLogout }: Props) {
               />
             ) : activeProjectSlug ? (
               <ProjectPage
-                key={`project:${activeProjectSlug}`}
+                key={`project:${activeProjectSlug}:${activeProjectSub ?? ""}`}
                 client={clientRef.current}
                 status={status}
                 projectSlug={activeProjectSlug}
+                initialSubSlug={activeProjectSub ?? undefined}
               />
             ) : activeChatId ? (
               <ChatDetailView
@@ -339,6 +353,13 @@ export function ChatApp({ user, onLogout }: Props) {
             client={clientRef.current}
             status={status}
             onOpenSession={(k) => { setActiveKey(k); setActiveChatId(null); setActiveChatProject(null); setPage("chat"); }}
+          />
+        )}
+        {page === "subprojects" && (
+          <SubprojectsPage
+            client={clientRef.current}
+            status={status}
+            onOpen={handleOpenSubproject}
           />
         )}
         {page === "channels" && <ChannelsPage client={clientRef.current} status={status} />}

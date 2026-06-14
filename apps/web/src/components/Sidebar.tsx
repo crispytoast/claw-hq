@@ -6,6 +6,7 @@ import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 export type SidebarPage =
   | "chat"
   | "sessions"
+  | "subprojects"
   | "channels"
   | "mcps"
   | "skills"
@@ -25,14 +26,15 @@ interface NavItem {
 // Order mirrors OHQ's static nav: live surfaces first, ops/debug last,
 // Settings always at the bottom. "Sessions" lives in the expandable group above.
 const STATIC_NAV: NavItem[] = [
-  { id: "channels",  label: "Channels",  icon: "📡" },
-  { id: "mcps",      label: "MCPs",      icon: "🛠️" },
-  { id: "skills",    label: "Skills",    icon: "🧠" },
-  { id: "models",    label: "Models",    icon: "🧮" },
-  { id: "approvals", label: "Approvals", icon: "✋" },
-  { id: "doctor",    label: "Doctor",    icon: "🩺" },
-  { id: "rpc",       label: "RPC",       icon: "🔌" },
-  { id: "settings",  label: "Settings",  icon: "⚙️" },
+  { id: "subprojects", label: "Subprojects", icon: "🌿" },
+  { id: "channels",    label: "Channels",    icon: "📡" },
+  { id: "mcps",        label: "MCPs",        icon: "🛠️" },
+  { id: "skills",      label: "Skills",      icon: "🧠" },
+  { id: "models",      label: "Models",      icon: "🧮" },
+  { id: "approvals",   label: "Approvals",   icon: "✋" },
+  { id: "doctor",      label: "Doctor",      icon: "🩺" },
+  { id: "rpc",         label: "RPC",         icon: "🔌" },
+  { id: "settings",    label: "Settings",    icon: "⚙️" },
 ];
 
 interface ProjectSummary {

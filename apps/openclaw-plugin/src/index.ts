@@ -20,7 +20,7 @@ import {
 } from "./memory.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.10";
+const PLUGIN_VERSION = "0.0.11";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -239,6 +239,45 @@ async function listSubprojects(workspaceRoot: string, parent: string) {
   return out;
 }
 
+async function listAllSubprojects(workspaceRoot: string | null) {
+  if (!workspaceRoot) {
+    return {
+      subprojects: [],
+      workspaceRoot: null,
+      hint: "workspaceRoot not configured",
+    };
+  }
+  const projectsDir = path.join(workspaceRoot, "projects");
+  let entries;
+  try {
+    entries = await fs.readdir(projectsDir, { withFileTypes: true });
+  } catch {
+    return {
+      subprojects: [],
+      workspaceRoot,
+      hint: `no projects/ directory under ${workspaceRoot}`,
+    };
+  }
+  const out: Array<{
+    parent: string;
+    id: string;
+    name: string;
+    blurb: string;
+    status: SubprojectStatus;
+    progress: number;
+    lastUpdatedMs: number;
+  }> = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (SKIP_DIRS.has(e.name)) continue;
+    if (!VALID_SLUG.test(e.name)) continue;
+    const subs = await listSubprojects(workspaceRoot, e.name);
+    for (const s of subs) out.push(s);
+  }
+  out.sort((a, b) => b.lastUpdatedMs - a.lastUpdatedMs);
+  return { subprojects: out, workspaceRoot };
+}
+
 async function subprojectGet(
   workspaceRoot: string | null,
   projectSlug: string,
@@ -347,6 +386,7 @@ export default definePluginEntry({
             "clawhq.health",
             "clawhq.projects.list",
             "clawhq.projects.get",
+            "clawhq.subprojects.list",
             "clawhq.subprojects.get",
             "clawhq.chats.list",
             "clawhq.chats.create",
@@ -405,6 +445,22 @@ export default definePluginEntry({
             });
             return;
           }
+          respond(true, result);
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.subprojects.list",
+      async ({ respond }) => {
+        try {
+          const result = await listAllSubprojects(workspaceRoot);
           respond(true, result);
         } catch (e) {
           respond(false, undefined, {
