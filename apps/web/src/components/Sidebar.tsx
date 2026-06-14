@@ -77,6 +77,8 @@ interface Props {
   activeChatId: string | null;
   onPickChat(chatId: string, projectSlug: string | null): void;
   onChatDeleted?(chatId: string): void;
+  activeProjectSlug: string | null;
+  onPickProject(slug: string): void;
   mobileOpen: boolean;
   onMobileClose(): void;
   onLogout(): void | Promise<void>;
@@ -96,6 +98,8 @@ export function Sidebar({
   activeChatId,
   onPickChat,
   onChatDeleted,
+  activeProjectSlug,
+  onPickProject,
   mobileOpen,
   onMobileClose,
   onLogout,
@@ -537,12 +541,14 @@ export function Sidebar({
                       const chats = projectChats.get(p.id);
                       const chatsLoading = projectChatsLoading.has(p.id);
                       const chatsErr = projectChatsErr.get(p.id);
+                      const isProjectActive = activeProjectSlug === p.id;
                       return (
-                        <div key={p.id} className="cl-project-block">
+                        <div key={p.id} className="cl-project-block" style={{ position: "relative" }}>
                           <button
                             type="button"
-                            className="cl-row"
+                            className={`cl-row ${isProjectActive ? "cl-active" : ""}`}
                             title={p.blurb || p.name}
+                            style={{ paddingRight: 60 }}
                             onClick={() => toggleProject(p.id)}
                           >
                             <div className="cl-row-main">
@@ -563,6 +569,17 @@ export function Sidebar({
                               )}
                             </div>
                           </button>
+                          <button
+                            type="button"
+                            className="cl-project-open"
+                            aria-label={`Open ${p.name} project page`}
+                            title="Open project home"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onPickProject(p.id);
+                              onMobileClose();
+                            }}
+                          >📋</button>
                           {isExpanded && (
                             <div className="cl-project-chats">
                               <button

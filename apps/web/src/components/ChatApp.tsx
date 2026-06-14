@@ -4,6 +4,7 @@ import { GatewayClient, defaultGatewayUrl, type ConnectionStatus } from "../gate
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { ChatPane } from "./ChatPane.js";
 import { ChatDetailView } from "./ChatDetailView.js";
+import { ProjectPage } from "./pages/ProjectPage.js";
 import { Settings } from "./Settings.js";
 import { NotificationsInbox } from "./NotificationsInbox.js";
 import { Sidebar, type SidebarPage } from "./Sidebar.js";
@@ -40,6 +41,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeChatProject, setActiveChatProject] = useState<string | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState<string>("");
+  const [activeProjectSlug, setActiveProjectSlug] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
@@ -117,12 +119,22 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveKey(key);
     setActiveChatId(null);
     setActiveChatProject(null);
+    setActiveProjectSlug(null);
     setPage("chat");
   }, []);
 
   const handlePickChat = useCallback((chatId: string, projectSlug: string | null) => {
     setActiveChatId(chatId);
     setActiveChatProject(projectSlug);
+    setActiveChatTitle("");
+    setActiveProjectSlug(null);
+    setPage("chat");
+  }, []);
+
+  const handlePickProject = useCallback((slug: string) => {
+    setActiveProjectSlug(slug);
+    setActiveChatId(null);
+    setActiveChatProject(null);
     setActiveChatTitle("");
     setPage("chat");
   }, []);
@@ -226,6 +238,8 @@ export function ChatApp({ user, onLogout }: Props) {
         activeChatId={activeChatId}
         onPickChat={handlePickChat}
         onChatDeleted={handleChatDeleted}
+        activeProjectSlug={activeProjectSlug}
+        onPickProject={handlePickProject}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onLogout={onLogout}
@@ -250,9 +264,11 @@ export function ChatApp({ user, onLogout }: Props) {
           >☰</button>
           <div style={{ flex: 1, minWidth: 0, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {page === "chat"
-              ? (activeChatId
-                  ? (activeChatTitle || (activeChatProject ? `${activeChatProject} · chat` : "Chat"))
-                  : (activeSession?.label ?? "No session"))
+              ? (activeProjectSlug
+                  ? `${activeProjectSlug} · project`
+                  : activeChatId
+                    ? (activeChatTitle || (activeChatProject ? `${activeChatProject} · chat` : "Chat"))
+                    : (activeSession?.label ?? "No session"))
               : null}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>{toolbar}</div>
@@ -260,7 +276,14 @@ export function ChatApp({ user, onLogout }: Props) {
 
         {page === "chat" && (
           clientRef.current ? (
-            activeChatId ? (
+            activeProjectSlug ? (
+              <ProjectPage
+                key={`project:${activeProjectSlug}`}
+                client={clientRef.current}
+                status={status}
+                projectSlug={activeProjectSlug}
+              />
+            ) : activeChatId ? (
               <ChatDetailView
                 key={activeChatId}
                 client={clientRef.current}

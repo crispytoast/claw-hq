@@ -10,9 +10,10 @@ import {
   renameChat,
   type ChatRole,
 } from "./chats.js";
+import { toggleTask } from "./tasks.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.5";
+const PLUGIN_VERSION = "0.0.6";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -299,6 +300,7 @@ export default definePluginEntry({
             "clawhq.chats.append",
             "clawhq.chats.rename",
             "clawhq.chats.delete",
+            "clawhq.tasks.toggle",
           ],
         });
       },
@@ -568,6 +570,98 @@ export default definePluginEntry({
           } catch (e) {
             api.logger.warn(
               `plugin.clawhq.chat.message broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.tasks.toggle",
+      async ({ respond, params, context }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const p = (params ?? {}) as {
+            projectSlug?: unknown;
+            subprojectSlug?: unknown;
+            lineIndex?: unknown;
+            checked?: unknown;
+          };
+          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: projectSlug",
+            });
+            return;
+          }
+          if (typeof p.lineIndex !== "number") {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "lineIndex must be a number",
+            });
+            return;
+          }
+          if (typeof p.checked !== "boolean") {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "checked must be a boolean",
+            });
+            return;
+          }
+          const subprojectSlug =
+            typeof p.subprojectSlug === "string" && p.subprojectSlug
+              ? p.subprojectSlug
+              : null;
+          const result = await toggleTask({
+            workspaceRoot,
+            projectSlug: p.projectSlug,
+            subprojectSlug,
+            lineIndex: p.lineIndex,
+            checked: p.checked,
+          });
+          if (!result) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no TASKS.md or line ${p.lineIndex} not a checkbox`,
+            });
+            return;
+          }
+          respond(true, {
+            projectSlug: result.projectSlug,
+            subprojectSlug: result.subprojectSlug,
+            lineIndex: result.lineIndex,
+            checked: result.checked,
+            content: result.content,
+            totalCount: result.totalCount,
+            checkedCount: result.checkedCount,
+          });
+          try {
+            context.broadcast("plugin.clawhq.task.toggled", {
+              projectSlug: result.projectSlug,
+              subprojectSlug: result.subprojectSlug,
+              lineIndex: result.lineIndex,
+              checked: result.checked,
+              content: result.content,
+              totalCount: result.totalCount,
+              checkedCount: result.checkedCount,
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.task.toggled broadcast failed: ${
                 e instanceof Error ? e.message : String(e)
               }`,
             );

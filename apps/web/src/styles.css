@@ -611,6 +611,74 @@ a:hover { text-decoration: underline; }
   min-height: 0;
 }
 
+.project-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  max-width: 56rem;
+  margin: 0 auto;
+}
+.project-card {
+  background: var(--bg-elev1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.project-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 1rem;
+  background: var(--bg-elev2);
+  border-bottom: 1px solid var(--border);
+}
+.project-card-header h3 {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0;
+  color: var(--text-dim);
+}
+.project-card-body {
+  padding: 0.875rem 1rem;
+  font-size: 0.9rem;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: inherit;
+  margin: 0;
+}
+.project-tasks {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.task-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 4px 0;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.task-line input[type="checkbox"] {
+  margin-top: 4px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.task-line.checked > span {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+.task-meta-line {
+  padding: 2px 0;
+  color: var(--foreground);
+  line-height: 1.4;
+  font-family: inherit;
+  white-space: pre-wrap;
+}
+
 .section-title {
   font-size: 0.9rem;
   color: var(--text-dim);
@@ -995,6 +1063,24 @@ a:hover { text-decoration: underline; }
   .cl-chat-row-actions { opacity: 1; }
 }
 .cl-chat-row-actions:hover { background: var(--bg-elev2); color: var(--accent); }
+
+.cl-project-open {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+.cl-project-open:hover { background: var(--bg-elev2); color: var(--accent); }
 .cl-chat-actions-popover {
   top: 32px;
   right: 4px;
