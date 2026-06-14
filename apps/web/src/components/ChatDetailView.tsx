@@ -127,12 +127,26 @@ interface DisplayTool {
   doneMs?: number;
 }
 
+interface DisplayApproval {
+  id: string;
+  command?: string;
+  cwd?: string;
+  reason?: string;
+  requestedMs: number;
+  status: "pending" | "approved" | "denied";
+  decisionMs?: number;
+  busy?: boolean;
+}
+
 type DisplayItem =
   | { kind: "message"; message: DisplayMessage }
-  | { kind: "tool"; tool: DisplayTool };
+  | { kind: "tool"; tool: DisplayTool }
+  | { kind: "approval"; approval: DisplayApproval };
 
 function itemKey(item: DisplayItem): string {
-  return item.kind === "message" ? `m:${item.message.id}` : `t:${item.tool.toolCallId}`;
+  if (item.kind === "message") return `m:${item.message.id}`;
+  if (item.kind === "tool") return `t:${item.tool.toolCallId}`;
+  return `a:${item.approval.id}`;
 }
 
 function newId(): string {
@@ -553,6 +567,152 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     });
   }, [client, sessionKey, chatId, noteOwnPersist]);
 
+  // Resolve an exec approval inline; mirrors ApprovalsPage but updates the in-chat
+  // card status and persists a system row so reload reflects the decision.
+  const resolveApproval = useCallback(
+    async (approvalId: string, allow: boolean) => {
+      // Snapshot the command label before we mutate so we can persist a useful
+      // system row even if the card is removed on a future event.
+      let commandLabel = approvalId;
+      setItems((prev) => {
+        const idx = prev.findIndex(
+          (it) => it.kind === "approval" && it.approval.id === approvalId,
+        );
+        if (idx === -1) return prev;
+        const target = prev[idx]!;
+        if (target.kind !== "approval") return prev;
+        if (target.approval.command) commandLabel = target.approval.command;
+        const next = [...prev];
+        next[idx] = {
+          kind: "approval",
+          approval: { ...target.approval, busy: true },
+        };
+        return next;
+      });
+      try {
+        await client.call("exec.approval.resolve", { id: approvalId, allow });
+        const decisionMs = Date.now();
+        setItems((prev) =>
+          prev.map((it) =>
+            it.kind === "approval" && it.approval.id === approvalId
+              ? {
+                  kind: "approval" as const,
+                  approval: {
+                    ...it.approval,
+                    status: allow ? ("approved" as const) : ("denied" as const),
+                    decisionMs,
+                    busy: false,
+                  },
+                }
+              : it,
+          ),
+        );
+        // Persist a system row so reload reflects the outcome. We don't extend
+        // the plugin's role union for this — the simpler path is a marker line.
+        const verb = allow ? "approved" : "denied";
+        const summary = commandLabel.length > 120
+          ? `${commandLabel.slice(0, 117)}…`
+          : commandLabel;
+        void client
+          .call<{ message?: { id?: string } }>("clawhq.chats.append", {
+            chatId,
+            role: "system",
+            content: `approval ${verb}: ${summary}`,
+          })
+          .then((r) => { if (r?.message?.id) noteOwnPersist(r.message.id); })
+          .catch((e) => { console.warn("clawhq.chats.append (approval) failed:", e); });
+      } catch (e) {
+        setItems((prev) =>
+          prev.map((it) =>
+            it.kind === "approval" && it.approval.id === approvalId
+              ? { kind: "approval" as const, approval: { ...it.approval, busy: false } }
+              : it,
+          ),
+        );
+        window.alert(`Failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [client, chatId, noteOwnPersist],
+  );
+
+  // Exec approval events. The gateway broadcasts exec.approval.requested when a
+  // command needs human go-ahead, and exec.approval.resolved when any operator
+  // resolves it. We filter both by sessionKey so the card only lands in the chat
+  // whose session it belongs to. Approvals fired outside any chat session
+  // (CLI-only) are ignored here — the Approvals page handles those.
+  useEffect(() => {
+    return client.onEvent((ev: OpenClawEvent) => {
+      if (ev.event !== "exec.approval.requested" && ev.event !== "exec.approval.resolved") {
+        return;
+      }
+      const p = (ev.payload ?? {}) as Record<string, unknown>;
+      // Payload shape varies; the approval body might be top-level or nested
+      // under .approval / .request. Read defensively.
+      const body = ((p.approval ?? p.request ?? p) as Record<string, unknown>) || {};
+      const id = typeof body.id === "string" ? body.id
+        : typeof p.id === "string" ? p.id
+        : null;
+      if (!id) return;
+      const evSessionKey =
+        typeof body.sessionKey === "string" ? body.sessionKey
+        : typeof p.sessionKey === "string" ? p.sessionKey
+        : null;
+      if (evSessionKey && evSessionKey !== sessionKey) return;
+      // No sessionKey means we can't attribute it to this chat — skip.
+      if (!evSessionKey) return;
+
+      if (ev.event === "exec.approval.requested") {
+        const command = typeof body.command === "string" ? body.command : undefined;
+        const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
+        const reason = typeof body.reason === "string" ? body.reason : undefined;
+        const requestedMs =
+          typeof body.requestedAt === "number" ? body.requestedAt
+          : typeof p.ts === "number" ? p.ts
+          : Date.now();
+        setItems((prev) => {
+          if (prev.some((it) => it.kind === "approval" && it.approval.id === id)) {
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              kind: "approval",
+              approval: { id, command, cwd, reason, requestedMs, status: "pending" },
+            },
+          ];
+        });
+        return;
+      }
+      // exec.approval.resolved — could be us or another operator. If we're
+      // showing a card for this id, mark it resolved.
+      const decision = body.decision ?? body.allow ?? p.decision ?? p.allow;
+      const allow =
+        decision === true
+        || decision === "approved"
+        || decision === "allow"
+        || decision === "allowed";
+      const decisionMs =
+        typeof body.resolvedAt === "number" ? body.resolvedAt
+        : typeof p.ts === "number" ? p.ts
+        : Date.now();
+      setItems((prev) =>
+        prev.map((it) =>
+          it.kind === "approval" && it.approval.id === id && it.approval.status === "pending"
+            ? {
+                kind: "approval" as const,
+                approval: {
+                  ...it.approval,
+                  status: allow ? ("approved" as const) : ("denied" as const),
+                  decisionMs,
+                  busy: false,
+                },
+              }
+            : it,
+        ),
+      );
+    });
+  }, [client, sessionKey]);
+
   // Cross-device live feed — broadcasts emitted by clawhq.chats.append on any
   // device land here. Skip our own echoes; otherwise append the new bubble.
   useEffect(() => {
@@ -741,6 +901,15 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           if (it.kind === "tool") {
             return <ToolBlock key={itemKey(it)} tool={it.tool} />;
           }
+          if (it.kind === "approval") {
+            return (
+              <ApprovalBlock
+                key={itemKey(it)}
+                approval={it.approval}
+                onResolve={resolveApproval}
+              />
+            );
+          }
           const m = it.message;
           return (
             <div
@@ -923,6 +1092,62 @@ function ToolBlock({ tool }: { tool: DisplayTool }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ApprovalBlock({
+  approval,
+  onResolve,
+}: {
+  approval: DisplayApproval;
+  onResolve(id: string, allow: boolean): void;
+}) {
+  const isPending = approval.status === "pending";
+  const statusClass =
+    approval.status === "approved" ? "ok"
+    : approval.status === "denied" ? "bad"
+    : "warn";
+  const statusLabel =
+    approval.status === "approved" ? "approved"
+    : approval.status === "denied" ? "denied"
+    : "needs approval";
+  const command = approval.command ?? approval.id;
+  return (
+    <div className={`approval-block ${approval.status}`}>
+      <div className="approval-block-header">
+        <span className="approval-block-icon">✋</span>
+        <span className="approval-block-title">Exec approval</span>
+        <span className={`status-pill ${statusClass}`}>
+          <span className="status-dot" />
+          {statusLabel}
+        </span>
+      </div>
+      <pre className="approval-block-cmd">{command}</pre>
+      {approval.cwd && (
+        <div className="approval-block-meta">
+          cwd: <code>{approval.cwd}</code>
+        </div>
+      )}
+      {approval.reason && (
+        <div className="approval-block-meta">{approval.reason}</div>
+      )}
+      {isPending ? (
+        <div className="approval-block-actions">
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={approval.busy}
+            onClick={() => onResolve(approval.id, true)}
+          >Approve</button>
+          <button
+            type="button"
+            className="btn-ghost danger"
+            disabled={approval.busy}
+            onClick={() => onResolve(approval.id, false)}
+          >Deny</button>
+        </div>
+      ) : null}
     </div>
   );
 }

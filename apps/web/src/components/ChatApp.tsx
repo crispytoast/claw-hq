@@ -53,6 +53,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
   const [page, setPage] = useState<PageKey>("chat");
 
   useEffect(() => {
@@ -223,6 +224,39 @@ export function ChatApp({ user, onLogout }: Props) {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  // Poll pending exec-approvals so the sidebar Approvals row shows a badge
+  // whenever something is waiting. Mirrors the notifications-bell cadence;
+  // exec.approval.requested events also pump this between ticks.
+  useEffect(() => {
+    if (status.kind !== "ready" || !clientRef.current) return;
+    const c = clientRef.current;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const result = await c.call<{ approvals?: unknown[]; pending?: unknown[] }>(
+          "exec.approval.list",
+          {},
+        );
+        const list = (result.approvals ?? result.pending ?? []) as unknown[];
+        if (!cancelled) setPendingApprovalsCount(list.length);
+      } catch {
+        // scope errors / unavailable — leave badge at last known count
+      }
+    };
+    void tick();
+    const id = setInterval(() => void tick(), 20_000);
+    // Pump on lifecycle events so the badge updates between polls.
+    const off = c.onEvent((ev) => {
+      if (
+        ev.event === "exec.approval.requested"
+        || ev.event === "exec.approval.resolved"
+      ) {
+        void tick();
+      }
+    });
+    return () => { cancelled = true; clearInterval(id); off(); };
+  }, [status.kind]);
+
   const pill = useMemo(() => statusPill(status), [status]);
 
   if (showSettings) {
@@ -295,6 +329,7 @@ export function ChatApp({ user, onLogout }: Props) {
         onShowPairedDevices={handleShowPairedDevices}
         client={clientRef.current}
         status={status}
+        pendingApprovalsCount={pendingApprovalsCount}
         footerRight={
           <span className={`status-pill ${pill.cls}`}>
             <span className="status-dot" />

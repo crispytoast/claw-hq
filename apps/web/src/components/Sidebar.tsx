@@ -116,6 +116,7 @@ interface Props {
   footerRight?: React.ReactNode;
   client: GatewayClient | null;
   status: ConnectionStatus;
+  pendingApprovalsCount?: number;
 }
 
 export function Sidebar({
@@ -141,6 +142,7 @@ export function Sidebar({
   footerRight,
   client,
   status,
+  pendingApprovalsCount = 0,
 }: Props) {
   // OHQ pattern: the group that matches the current page starts expanded.
   const [sessionsOpen, setSessionsOpen] = useState(page === "chat" || page === "sessions");
@@ -880,18 +882,26 @@ export function Sidebar({
 
           {/* Static nav. */}
           <div className="cl-static-nav">
-            {STATIC_NAV.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`cl-nav-item ${page === item.id ? "cl-active" : ""}`}
-                onClick={() => pick(item.id)}
-              >
-                <span className="cl-nav-icon">{item.icon}</span>
-                <span>{item.label}</span>
-                {item.dot && <span className={`cl-nav-dot cl-${item.dot}`} />}
-              </button>
-            ))}
+            {STATIC_NAV.map((item) => {
+              const badge = item.id === "approvals" && pendingApprovalsCount > 0
+                ? pendingApprovalsCount
+                : null;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`cl-nav-item ${page === item.id ? "cl-active" : ""}`}
+                  onClick={() => pick(item.id)}
+                >
+                  <span className="cl-nav-icon">{item.icon}</span>
+                  <span>{item.label}</span>
+                  {badge !== null && (
+                    <span className="cl-nav-item-badge">{badge > 9 ? "9+" : badge}</span>
+                  )}
+                  {item.dot && !badge && <span className={`cl-nav-dot cl-${item.dot}`} />}
+                </button>
+              );
+            })}
           </div>
         </nav>
 
