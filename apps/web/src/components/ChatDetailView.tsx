@@ -138,15 +138,69 @@ interface DisplayApproval {
   busy?: boolean;
 }
 
+interface AskQuestionOption {
+  label: string;
+  description?: string;
+}
+
+interface AskQuestion {
+  question: string;
+  header?: string;
+  options: AskQuestionOption[];
+  multiSelect?: boolean;
+}
+
+interface DisplayQuestion {
+  toolCallId: string;
+  questions: AskQuestion[];
+  status: "pending" | "answered";
+  answer?: string;
+  startedMs: number;
+}
+
 type DisplayItem =
   | { kind: "message"; message: DisplayMessage }
   | { kind: "tool"; tool: DisplayTool }
-  | { kind: "approval"; approval: DisplayApproval };
+  | { kind: "approval"; approval: DisplayApproval }
+  | { kind: "question"; question: DisplayQuestion };
 
 function itemKey(item: DisplayItem): string {
   if (item.kind === "message") return `m:${item.message.id}`;
   if (item.kind === "tool") return `t:${item.tool.toolCallId}`;
-  return `a:${item.approval.id}`;
+  if (item.kind === "approval") return `a:${item.approval.id}`;
+  return `q:${item.question.toolCallId}`;
+}
+
+function parseAskQuestionArgs(args: unknown): AskQuestion[] | null {
+  if (!args || typeof args !== "object") return null;
+  const obj = args as Record<string, unknown>;
+  const rawQs = obj.questions;
+  if (!Array.isArray(rawQs)) return null;
+  const out: AskQuestion[] = [];
+  for (const q of rawQs) {
+    if (!q || typeof q !== "object") continue;
+    const qObj = q as Record<string, unknown>;
+    const question = typeof qObj.question === "string" ? qObj.question : null;
+    if (!question) continue;
+    const rawOpts = Array.isArray(qObj.options) ? qObj.options : [];
+    const options: AskQuestionOption[] = [];
+    for (const opt of rawOpts) {
+      if (!opt || typeof opt !== "object") continue;
+      const oObj = opt as Record<string, unknown>;
+      if (typeof oObj.label !== "string") continue;
+      options.push({
+        label: oObj.label,
+        description: typeof oObj.description === "string" ? oObj.description : undefined,
+      });
+    }
+    out.push({
+      question,
+      header: typeof qObj.header === "string" ? qObj.header : undefined,
+      options,
+      multiSelect: qObj.multiSelect === true,
+    });
+  }
+  return out.length > 0 ? out : null;
 }
 
 function newId(): string {
@@ -581,6 +635,27 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
 
       if (phase === "start") {
         const args = data.args;
+        // AskUserQuestion is rendered as a tap-card, not a generic tool block.
+        // Same OHQ pattern from src/app/chat/[id]/ChatView.tsx → block.kind === "ask-question".
+        if (name === "AskUserQuestion") {
+          const questions = parseAskQuestionArgs(args);
+          if (questions) {
+            setItems((prev) => {
+              if (prev.some(
+                (it) => (it.kind === "question" && it.question.toolCallId === toolCallId)
+                  || (it.kind === "tool" && it.tool.toolCallId === toolCallId),
+              )) return prev;
+              return [
+                ...prev,
+                {
+                  kind: "question",
+                  question: { toolCallId, questions, status: "pending", startedMs: ts },
+                },
+              ];
+            });
+            return;
+          }
+        }
         setItems((prev) => {
           if (prev.some((it) => it.kind === "tool" && it.tool.toolCallId === toolCallId)) {
             return prev;
@@ -598,6 +673,28 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       if (phase === "result") {
         const result = data.result;
         const isError = data.isError === true;
+        // If the result corresponds to an AskUserQuestion card we already
+        // rendered, mark that card as answered and skip the tool-block path +
+        // tool-persistence path (cards are stateless on reload — see step 14's
+        // approval-card design rationale).
+        let questionHandled = false;
+        setItems((prev) => {
+          const qIdx = prev.findIndex(
+            (it) => it.kind === "question" && it.question.toolCallId === toolCallId,
+          );
+          if (qIdx === -1) return prev;
+          questionHandled = true;
+          const existing = prev[qIdx]!;
+          if (existing.kind !== "question") return prev;
+          if (existing.question.status === "answered") return prev;
+          const next = [...prev];
+          next[qIdx] = {
+            kind: "question",
+            question: { ...existing.question, status: "answered" },
+          };
+          return next;
+        });
+        if (questionHandled) return;
         let persistedArgs: unknown = undefined;
         let persistedStartedMs = ts;
         setItems((prev) => {
@@ -957,6 +1054,63 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     }
   }, [client, chatId, projectSlug, sessionKey, input, attachments, status.kind, pending, noteOwnPersist, revokePreviewUrl, listening]);
 
+  // Answer an inline AskUserQuestion tap-card: send the label as a new user
+  // turn (same as OHQ's onAnswer flow). Optimistic-flips the card to answered
+  // immediately so a double-tap can't double-send.
+  const answerQuestion = useCallback(
+    async (toolCallId: string, label: string) => {
+      if (status.kind !== "ready" || pending) return;
+      let alreadyAnswered = false;
+      setItems((prev) => {
+        const idx = prev.findIndex(
+          (it) => it.kind === "question" && it.question.toolCallId === toolCallId,
+        );
+        if (idx === -1) return prev;
+        const target = prev[idx]!;
+        if (target.kind !== "question") return prev;
+        if (target.question.status === "answered") { alreadyAnswered = true; return prev; }
+        const next = [...prev];
+        next[idx] = {
+          kind: "question",
+          question: { ...target.question, status: "answered", answer: label },
+        };
+        return next;
+      });
+      if (alreadyAnswered) return;
+      setPending(true);
+      const optimistic: DisplayMessage = { id: newId(), role: "user", text: label };
+      setItems((prev) => [...prev, { kind: "message", message: optimistic }]);
+      try {
+        const appendResult = await client.call<{ message?: { id?: string } }>(
+          "clawhq.chats.append",
+          { chatId, role: "user", content: label },
+        );
+        if (appendResult?.message?.id) noteOwnPersist(appendResult.message.id);
+        await client.call("chat.send", {
+          sessionKey,
+          message: label,
+          idempotencyKey: `clawhq-${chatId}-q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // Flip the card back so the user can retry.
+        setItems((prev) =>
+          prev.map((it) =>
+            it.kind === "question" && it.question.toolCallId === toolCallId
+              ? {
+                  kind: "question" as const,
+                  question: { ...it.question, status: "pending" as const, answer: undefined },
+                }
+              : it,
+          ),
+        );
+        setErr(`Answer failed: ${msg}`);
+        setPending(false);
+      }
+    },
+    [client, chatId, sessionKey, status.kind, pending, noteOwnPersist],
+  );
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1013,6 +1167,16 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
                 key={itemKey(it)}
                 approval={it.approval}
                 onResolve={resolveApproval}
+              />
+            );
+          }
+          if (it.kind === "question") {
+            return (
+              <QuestionBlock
+                key={itemKey(it)}
+                question={it.question}
+                onAnswer={answerQuestion}
+                disabled={status.kind !== "ready" || pending}
               />
             );
           }
@@ -1214,6 +1378,50 @@ function ToolBlock({ tool }: { tool: DisplayTool }) {
             </>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function QuestionBlock({
+  question,
+  onAnswer,
+  disabled,
+}: {
+  question: DisplayQuestion;
+  onAnswer(toolCallId: string, label: string): void;
+  disabled: boolean;
+}) {
+  const answered = question.status === "answered";
+  return (
+    <div className={`question-block ${answered ? "answered" : "pending"}`}>
+      {question.questions.map((q, qi) => (
+        <div key={qi} className="question-block-card">
+          {q.header && <div className="question-block-header">{q.header}</div>}
+          <div className="question-block-question">{q.question}</div>
+          <div className="question-block-options">
+            {q.options.map((opt, oi) => {
+              const isChosen = answered && question.answer === opt.label;
+              return (
+                <button
+                  key={oi}
+                  type="button"
+                  className={`question-block-option ${isChosen ? "chosen" : ""}`}
+                  disabled={disabled || answered}
+                  onClick={() => onAnswer(question.toolCallId, opt.label)}
+                >
+                  <div className="question-block-option-label">{opt.label}</div>
+                  {opt.description && (
+                    <div className="question-block-option-desc">{opt.description}</div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      {answered && question.answer && (
+        <div className="question-block-answered-tag">answered: {question.answer}</div>
       )}
     </div>
   );
