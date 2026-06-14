@@ -235,12 +235,13 @@ async function main() {
     if (!String(e.message).includes("NOT_FOUND")) fail(`delete-missing: ${e.message}`);
   }
 
-  // === INVALID_REQUEST: missing required params ===
-  try {
-    await A.call("clawhq.memory.list", {});
-    fail("list missing projectSlug should fail");
-  } catch (e) {
-    if (!String(e.message).includes("INVALID_REQUEST")) fail(`list-missing: ${e.message}`);
+  // === list with no projectSlug now means workspace mode (post step 13) ===
+  // Asserted in phaseC13-workspace-memory-test.mjs; here we just verify the
+  // call succeeds and doesn't accidentally return our project file.
+  const wsList = await A.call("clawhq.memory.list", {});
+  if (!Array.isArray(wsList.files)) fail("workspace list shape");
+  if (wsList.files.some((f) => f.name === "NOTES.md" || f.name === "ideas.md")) {
+    fail("workspace list leaked project-mode files");
   }
 
   A.close();

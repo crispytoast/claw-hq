@@ -48,6 +48,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [activeProjectSlug, setActiveProjectSlug] = useState<string | null>(null);
   const [activeProjectSub, setActiveProjectSub] = useState<string | null>(null);
   const [activeMemoryProject, setActiveMemoryProject] = useState<string | null>(null);
+  const [activeWorkspaceMemory, setActiveWorkspaceMemory] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
@@ -127,6 +128,7 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveChatProject(null);
     setActiveProjectSlug(null);
     setActiveMemoryProject(null);
+    setActiveWorkspaceMemory(false);
     setPage("chat");
   }, []);
 
@@ -147,6 +149,7 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveChatProject(null);
     setActiveChatTitle("");
     setActiveMemoryProject(null);
+    setActiveWorkspaceMemory(false);
     setPage("chat");
   }, []);
 
@@ -157,11 +160,23 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveChatProject(null);
     setActiveChatTitle("");
     setActiveMemoryProject(null);
+    setActiveWorkspaceMemory(false);
     setPage("chat");
   }, []);
 
   const handlePickProjectMemory = useCallback((slug: string) => {
     setActiveMemoryProject(slug);
+    setActiveWorkspaceMemory(false);
+    setActiveProjectSlug(null);
+    setActiveChatId(null);
+    setActiveChatProject(null);
+    setActiveChatTitle("");
+    setPage("chat");
+  }, []);
+
+  const handlePickWorkspaceMemory = useCallback(() => {
+    setActiveWorkspaceMemory(true);
+    setActiveMemoryProject(null);
     setActiveProjectSlug(null);
     setActiveChatId(null);
     setActiveChatProject(null);
@@ -272,6 +287,8 @@ export function ChatApp({ user, onLogout }: Props) {
         onPickProject={handlePickProject}
         activeMemoryProject={activeMemoryProject}
         onPickProjectMemory={handlePickProjectMemory}
+        activeWorkspaceMemory={activeWorkspaceMemory}
+        onPickWorkspaceMemory={handlePickWorkspaceMemory}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onLogout={onLogout}
@@ -300,6 +317,8 @@ export function ChatApp({ user, onLogout }: Props) {
                   ? `${activeProjectSlug} · project`
                   : activeMemoryProject
                     ? `${activeMemoryProject} · memory`
+                  : activeWorkspaceMemory
+                    ? "Workspace · memory"
                   : activeChatId
                     ? (activeChatTitle || (activeChatProject ? `${activeChatProject} · chat` : "Chat"))
                     : (activeSession?.label ?? "No session"))
@@ -310,7 +329,14 @@ export function ChatApp({ user, onLogout }: Props) {
 
         {page === "chat" && (
           clientRef.current ? (
-            activeMemoryProject ? (
+            activeWorkspaceMemory ? (
+              <MemoryEditorPage
+                key="memory:@workspace"
+                client={clientRef.current}
+                status={status}
+                projectSlug={null}
+              />
+            ) : activeMemoryProject ? (
               <MemoryEditorPage
                 key={`memory:${activeMemoryProject}`}
                 client={clientRef.current}

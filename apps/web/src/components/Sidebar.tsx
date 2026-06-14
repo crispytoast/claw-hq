@@ -107,6 +107,8 @@ interface Props {
   onPickProject(slug: string): void;
   activeMemoryProject: string | null;
   onPickProjectMemory(slug: string): void;
+  activeWorkspaceMemory: boolean;
+  onPickWorkspaceMemory(): void;
   mobileOpen: boolean;
   onMobileClose(): void;
   onLogout(): void | Promise<void>;
@@ -130,6 +132,8 @@ export function Sidebar({
   onPickProject,
   activeMemoryProject,
   onPickProjectMemory,
+  activeWorkspaceMemory,
+  onPickWorkspaceMemory,
   mobileOpen,
   onMobileClose,
   onLogout,
@@ -682,6 +686,16 @@ export function Sidebar({
             </button>
             <div className={`cl-group-body ${projectsOpen ? "cl-expanded" : ""}`}>
               <div className="cl-group-inner">
+                <button
+                  type="button"
+                  className={`cl-row ${activeWorkspaceMemory ? "cl-active" : ""}`}
+                  title="Edit shared workspace memory (workspace/memory/*.md)"
+                  onClick={() => { onPickWorkspaceMemory(); onMobileClose(); }}
+                >
+                  <div className="cl-row-main">
+                    <span className="cl-row-title">🧠 Workspace memory</span>
+                  </div>
+                </button>
                 {projectsLoading && projects === null ? (
                   <div className="cl-list-empty">Loading projects…</div>
                 ) : projects && projects.length > 0 ? (

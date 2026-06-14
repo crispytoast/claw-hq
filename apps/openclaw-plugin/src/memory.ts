@@ -26,16 +26,24 @@ function withFileLock<T>(absPath: string, fn: () => Promise<T>): Promise<T> {
   return result;
 }
 
+/**
+ * When projectSlug is empty/null, returns `<workspaceRoot>/memory/` for shared
+ * workspace memory. When set, returns `<workspaceRoot>/projects/<slug>/memory/`.
+ * Both paths are guarded against traversal escape.
+ */
 function resolveMemoryDir(
   workspaceRoot: string,
-  projectSlug: string,
+  projectSlug: string | null,
 ): string | null {
+  const workspaceAbs = path.resolve(workspaceRoot);
+  if (!projectSlug) {
+    return path.resolve(path.join(workspaceAbs, "memory"));
+  }
   if (!VALID_SLUG.test(projectSlug)) return null;
-  const projectsDir = path.resolve(path.join(workspaceRoot, "projects"));
+  const projectsDir = path.resolve(path.join(workspaceAbs, "projects"));
   const memoryDir = path.resolve(
     path.join(projectsDir, projectSlug, "memory"),
   );
-  // Defense-in-depth: refuse anything that escapes projects/.
   if (
     memoryDir !== projectsDir &&
     !memoryDir.startsWith(projectsDir + path.sep)
@@ -47,7 +55,7 @@ function resolveMemoryDir(
 
 function resolveMemoryFile(
   workspaceRoot: string,
-  projectSlug: string,
+  projectSlug: string | null,
   name: string,
 ): string | null {
   if (!VALID_FILENAME.test(name)) return null;
@@ -70,7 +78,7 @@ export interface MemoryFileContent extends MemoryFileSummary {
 
 export async function listMemoryFiles(input: {
   workspaceRoot: string;
-  projectSlug: string;
+  projectSlug: string | null;
 }): Promise<MemoryFileSummary[] | null> {
   const dir = resolveMemoryDir(input.workspaceRoot, input.projectSlug);
   if (!dir) return null;
@@ -99,7 +107,7 @@ export async function listMemoryFiles(input: {
 
 export async function getMemoryFile(input: {
   workspaceRoot: string;
-  projectSlug: string;
+  projectSlug: string | null;
   name: string;
 }): Promise<MemoryFileContent | null> {
   const filePath = resolveMemoryFile(
@@ -130,7 +138,7 @@ export interface PutMemoryResult extends MemoryFileContent {
 
 export async function putMemoryFile(input: {
   workspaceRoot: string;
-  projectSlug: string;
+  projectSlug: string | null;
   name: string;
   content: string;
 }): Promise<PutMemoryResult | null | "TOO_LARGE"> {
@@ -169,7 +177,7 @@ export async function putMemoryFile(input: {
 
 export async function deleteMemoryFile(input: {
   workspaceRoot: string;
-  projectSlug: string;
+  projectSlug: string | null;
   name: string;
 }): Promise<{ deleted: true } | null> {
   const filePath = resolveMemoryFile(

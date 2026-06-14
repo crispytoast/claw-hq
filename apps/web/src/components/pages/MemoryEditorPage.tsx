@@ -6,7 +6,8 @@ import { PageShell } from "./PageShell.js";
 interface Props {
   client: GatewayClient | null;
   status: ConnectionStatus;
-  projectSlug: string;
+  /** Project slug to edit, or `null` for workspace-level (<workspace>/memory/). */
+  projectSlug: string | null;
 }
 
 interface MemoryFileSummary {
@@ -20,17 +21,17 @@ interface MemoryFileContent extends MemoryFileSummary {
 }
 
 interface ListResponse {
-  projectSlug: string;
+  projectSlug: string | null;
   files: MemoryFileSummary[];
 }
 
 interface GetResponse {
-  projectSlug: string;
+  projectSlug: string | null;
   file: MemoryFileContent;
 }
 
 interface PutResponse {
-  projectSlug: string;
+  projectSlug: string | null;
   file: MemoryFileContent & { created: boolean };
 }
 
@@ -55,7 +56,7 @@ export function MemoryEditorPage({ client, status, projectSlug }: Props) {
     setListError(null);
     try {
       const res = await client.call<ListResponse>("clawhq.memory.list", {
-        projectSlug,
+        projectSlug: projectSlug ?? undefined,
       });
       setFiles(res.files);
     } catch (err) {
@@ -70,7 +71,7 @@ export function MemoryEditorPage({ client, status, projectSlug }: Props) {
       setSaveError(null);
       try {
         const res = await client.call<GetResponse>("clawhq.memory.get", {
-          projectSlug,
+          projectSlug: projectSlug ?? undefined,
           name,
         });
         setActiveName(name);
@@ -102,7 +103,8 @@ export function MemoryEditorPage({ client, status, projectSlug }: Props) {
         return;
       }
       const p = (ev.payload ?? {}) as { projectSlug?: unknown; name?: unknown };
-      if (p.projectSlug !== projectSlug) return;
+      const evSlug = typeof p.projectSlug === "string" && p.projectSlug ? p.projectSlug : null;
+      if (evSlug !== projectSlug) return;
       void loadFiles();
       if (
         ev.event === "plugin.clawhq.memory.deleted" &&
@@ -123,7 +125,7 @@ export function MemoryEditorPage({ client, status, projectSlug }: Props) {
     setSaveError(null);
     try {
       const res = await client.call<PutResponse>("clawhq.memory.put", {
-        projectSlug,
+        projectSlug: projectSlug ?? undefined,
         name: activeName,
         content: activeContent,
       });
@@ -141,7 +143,7 @@ export function MemoryEditorPage({ client, status, projectSlug }: Props) {
     const confirmed = window.confirm(`Delete "${activeName}"? This can't be undone.`);
     if (!confirmed) return;
     try {
-      await client.call("clawhq.memory.delete", { projectSlug, name: activeName });
+      await client.call("clawhq.memory.delete", { projectSlug: projectSlug ?? undefined, name: activeName });
       setActiveName(null);
       setActiveContent("");
       setActiveMeta(null);
@@ -161,7 +163,7 @@ export function MemoryEditorPage({ client, status, projectSlug }: Props) {
     setNewNameError(null);
     try {
       const res = await client.call<PutResponse>("clawhq.memory.put", {
-        projectSlug,
+        projectSlug: projectSlug ?? undefined,
         name,
         content: "",
       });
@@ -195,8 +197,12 @@ export function MemoryEditorPage({ client, status, projectSlug }: Props) {
 
   return (
     <PageShell
-      title={`${projectSlug} · Memory`}
-      subtitle="Edit per-project memory files (workspace/projects/<slug>/memory/*.md)"
+      title={projectSlug ? `${projectSlug} · Memory` : "Workspace · Memory"}
+      subtitle={
+        projectSlug
+          ? "Edit per-project memory files (workspace/projects/<slug>/memory/*.md)"
+          : "Edit shared workspace memory files (workspace/memory/*.md)"
+      }
       actions={
         <button className="btn-ghost" onClick={() => void loadFiles()} disabled={status.kind !== "ready"}>
           Refresh

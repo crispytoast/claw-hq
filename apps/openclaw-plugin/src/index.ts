@@ -20,7 +20,7 @@ import {
 } from "./memory.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.11";
+const PLUGIN_VERSION = "0.0.12";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -917,25 +917,17 @@ export default definePluginEntry({
             return;
           }
           const p = (params ?? {}) as { projectSlug?: unknown };
-          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
-            respond(false, undefined, {
-              code: "INVALID_REQUEST",
-              message: "missing required param: projectSlug",
-            });
-            return;
-          }
-          const files = await listMemoryFiles({
-            workspaceRoot,
-            projectSlug: p.projectSlug,
-          });
+          const projectSlug =
+            typeof p.projectSlug === "string" && p.projectSlug ? p.projectSlug : null;
+          const files = await listMemoryFiles({ workspaceRoot, projectSlug });
           if (!files) {
             respond(false, undefined, {
               code: "INVALID_REQUEST",
-              message: `invalid projectSlug: ${p.projectSlug}`,
+              message: `invalid projectSlug: ${String(p.projectSlug)}`,
             });
             return;
           }
-          respond(true, { projectSlug: p.projectSlug, files });
+          respond(true, { projectSlug, files });
         } catch (e) {
           respond(false, undefined, {
             code: "INTERNAL",
@@ -961,13 +953,8 @@ export default definePluginEntry({
             projectSlug?: unknown;
             name?: unknown;
           };
-          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
-            respond(false, undefined, {
-              code: "INVALID_REQUEST",
-              message: "missing required param: projectSlug",
-            });
-            return;
-          }
+          const projectSlug =
+            typeof p.projectSlug === "string" && p.projectSlug ? p.projectSlug : null;
           if (typeof p.name !== "string" || !p.name) {
             respond(false, undefined, {
               code: "INVALID_REQUEST",
@@ -977,17 +964,17 @@ export default definePluginEntry({
           }
           const file = await getMemoryFile({
             workspaceRoot,
-            projectSlug: p.projectSlug,
+            projectSlug,
             name: p.name,
           });
           if (!file) {
             respond(false, undefined, {
               code: "NOT_FOUND",
-              message: `no memory file: ${p.projectSlug}/${p.name}`,
+              message: `no memory file: ${projectSlug ?? "<workspace>"}/${p.name}`,
             });
             return;
           }
-          respond(true, { projectSlug: p.projectSlug, file });
+          respond(true, { projectSlug, file });
         } catch (e) {
           respond(false, undefined, {
             code: "INTERNAL",
@@ -1014,13 +1001,8 @@ export default definePluginEntry({
             name?: unknown;
             content?: unknown;
           };
-          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
-            respond(false, undefined, {
-              code: "INVALID_REQUEST",
-              message: "missing required param: projectSlug",
-            });
-            return;
-          }
+          const projectSlug =
+            typeof p.projectSlug === "string" && p.projectSlug ? p.projectSlug : null;
           if (typeof p.name !== "string" || !p.name) {
             respond(false, undefined, {
               code: "INVALID_REQUEST",
@@ -1037,7 +1019,7 @@ export default definePluginEntry({
           }
           const result = await putMemoryFile({
             workspaceRoot,
-            projectSlug: p.projectSlug,
+            projectSlug,
             name: p.name,
             content: p.content,
           });
@@ -1051,14 +1033,14 @@ export default definePluginEntry({
           if (!result) {
             respond(false, undefined, {
               code: "INVALID_REQUEST",
-              message: `invalid projectSlug or filename: ${p.projectSlug}/${p.name}`,
+              message: `invalid projectSlug or filename: ${projectSlug ?? "<workspace>"}/${p.name}`,
             });
             return;
           }
-          respond(true, { projectSlug: p.projectSlug, file: result });
+          respond(true, { projectSlug, file: result });
           try {
             context.broadcast("plugin.clawhq.memory.updated", {
-              projectSlug: p.projectSlug,
+              projectSlug,
               name: result.name,
               size: result.size,
               updatedMs: result.updatedMs,
@@ -1096,13 +1078,8 @@ export default definePluginEntry({
             projectSlug?: unknown;
             name?: unknown;
           };
-          if (typeof p.projectSlug !== "string" || !p.projectSlug) {
-            respond(false, undefined, {
-              code: "INVALID_REQUEST",
-              message: "missing required param: projectSlug",
-            });
-            return;
-          }
+          const projectSlug =
+            typeof p.projectSlug === "string" && p.projectSlug ? p.projectSlug : null;
           if (typeof p.name !== "string" || !p.name) {
             respond(false, undefined, {
               code: "INVALID_REQUEST",
@@ -1112,20 +1089,20 @@ export default definePluginEntry({
           }
           const result = await deleteMemoryFile({
             workspaceRoot,
-            projectSlug: p.projectSlug,
+            projectSlug,
             name: p.name,
           });
           if (!result) {
             respond(false, undefined, {
               code: "NOT_FOUND",
-              message: `no memory file: ${p.projectSlug}/${p.name}`,
+              message: `no memory file: ${projectSlug ?? "<workspace>"}/${p.name}`,
             });
             return;
           }
           respond(true, { deleted: true });
           try {
             context.broadcast("plugin.clawhq.memory.deleted", {
-              projectSlug: p.projectSlug,
+              projectSlug,
               name: p.name,
             });
           } catch (e) {
