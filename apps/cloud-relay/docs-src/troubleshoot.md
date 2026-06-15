@@ -56,4 +56,4 @@ Re-pair the tunnel: `claw-hq pair`. Silent local pairing grants `operator.admin`
 
 ## Where to file issues
 
-GitHub: <https://github.com/your-org/claw-hq/issues>. Include `claw-hq doctor` output.
+GitHub: <https://github.com/crispytoast/claw-hq/issues>. Include `claw-hq doctor` output.

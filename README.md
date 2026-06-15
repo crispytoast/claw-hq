@@ -1,20 +1,27 @@
 # Claw HQ
 
-**Self-hosted cross-device interface for OpenClaw.**
+**The comprehensive self-hosted GUI for [OpenClaw](https://openclaw.ai).** Replaces the OpenClaw terminal for ordinary use — every command has a UI counterpart. Runs on your machine, talks to your local OpenClaw daemon, never phones home.
 
-Download OpenClaw, then download Claw HQ. Run the setup wizard, pick how you want to deploy it (local-only, LAN, Tailnet, custom VPN, VPS-relay, behind your reverse proxy — your call), and you have a polished web/PWA on top of your own OpenClaw. No central server, no telemetry, no accounts on someone else's machine.
+- **Phone, laptop, desktop** — one relay, every device, cross-device live feed with no polling lag
+- **No API keys in Claw HQ** — OpenClaw owns provider auth (Anthropic, OpenAI, Gemini, Ollama, OpenRouter, …)
+- **Native APK** with FCM push when an agent finishes a long run + tappable approval cards
+- **PWA-installable** web client with offline shell
+- **Voice input** via Android's `SpeechRecognizer` (same engine as Gboard mic)
+- **Inline diff rendering** for `Edit` / `Write` / `MultiEdit` tool calls
+- **Three auth modes** that match real deployments — trusted LAN, shared secret, real accounts
+- **Every OpenClaw RPC** has a UI page — Channels, MCPs, Skills, Models, Approvals, Cron, Nodes, Plugins, Memory, Sessions, Doctor, RPC console
 
 ## Install
 
-**Via npm (recommended — Node 22+):**
-```sh
+**Via npm** (Node 22+):
+```bash
 npm install -g @claw-hq/cli
-claw-hq init
+claw-hq init    # setup wizard
 claw-hq start
 ```
 
 **Via Docker:**
-```sh
+```bash
 docker run -d --name claw-hq \
   -p 3838:3838 \
   -v ~/.claw-hq:/data \
@@ -22,84 +29,137 @@ docker run -d --name claw-hq \
   claw-hq/claw-hq
 ```
 
-**Via install script (installs Node + Claw HQ):**
-```sh
-curl -fsSL https://claw-hq.example/install.sh | sh
+**Via install script** (Linux / macOS — installs Node 22 if missing):
+```bash
+curl -fsSL https://claw-hq.dev/install.sh | sh
 ```
 
-Then open `http://localhost:3838/` (or wherever you bound it) in any browser. On mobile, Chrome will prompt "Install"; iOS Safari → Share → "Add to Home Screen". You get a home-screen icon and full-screen mode — same UX as a native app.
+Then open `http://localhost:3838/`. On Android, the **APK** at `/install` adds push notifications and self-update via `PackageInstaller`.
+
+Full install guide: [docs/install](https://github.com/crispytoast/claw-hq/blob/main/apps/cloud-relay/docs-src/install.md) (also served at `/docs/install` from your running relay).
+
+## What it covers
+
+| Page | OpenClaw RPC | Status |
+|---|---|---|
+| Chat | `chat.send` + `session.tool` / `session.message` events | ✅ |
+| Sessions | `sessions.list` + Open/Compact/Delete | ✅ |
+| Project home | `clawhq.projects.{list,get}` + interactive task checkboxes | ✅ |
+| Subprojects | `clawhq.subprojects.{list,get}` | ✅ |
+| Channels | `channels.status` | ✅ |
+| MCPs | `tools.catalog` grouped by source server | ✅ |
+| Skills | `skills.search` + `skills.install` | ✅ |
+| Models | `models.list` grouped by provider | ✅ |
+| Approvals | `exec.approval.list` + `exec.approval.resolve` (inline cards + page) | ✅ |
+| Cron | `cron.{list,run,remove,add,update,runs}` | ✅ |
+| Nodes | `node.{list,pair.*,rename,remove}` | ✅ |
+| Plugins | `clawhq.plugins.{list,search,install,uninstall}` | ✅ |
+| Memory | `clawhq.memory.{list,get,put,delete}` (workspace + project-scoped) | ✅ |
+| Doctor | `health` | ✅ |
+| RPC Console | any Gateway method | ✅ |
+| Settings | OpenClaw status / Pairing / Plugins / Notifications / Updates / About | ✅ |
 
 ## Setup wizard (`claw-hq init`)
 
 Walks you through:
 
 1. **Where does OpenClaw run?** Auto-detects `~/.openclaw/openclaw.json`.
-2. **Where do you want to access Claw HQ from?**
-   - Just this machine (localhost only)
-   - My LAN (shared-secret recommended)
-   - My Tailnet / VPN (shared-secret recommended)
-   - Public internet (real-auth required + put TLS in front)
-3. **Auth mode** (suggested based on reach):
-   - `trusted-lan` — no password, anyone reachable is trusted
-   - `shared-secret` — one passphrase for everyone
-   - `real-auth` — email + password accounts
-4. **Passphrase** (if shared-secret).
+2. **Where do you want to access Claw HQ from?** Localhost, LAN, Tailnet, public internet.
+3. **Auth mode** suggested based on reach: `trusted-lan` / `shared-secret` / `real-auth`.
+4. **Passphrase** (shared-secret) or **first user** (real-auth).
 5. **Port + public URL**.
 6. Writes `~/.claw-hq/config.json`.
 
-Then `claw-hq start` runs the relay + tunnel together (single process by default).
+Then `claw-hq start` runs the relay + tunnel in one process. The CLI auto-generates an in-process pairing token so single-host deployments need zero pairing UI.
 
-## Other CLI commands
+## CLI
 
+- `claw-hq init` — setup wizard
 - `claw-hq start` — start the configured services
-- `claw-hq pair <token>` — split-host deployments: pair this machine's tunnel with a remote relay
-- `claw-hq doctor` — sanity check (config, OpenClaw reachability)
+- `claw-hq pair <token>` — pair a tunnel with a remote relay (split-host)
+- `claw-hq tls-setup` — bind Tailscale Serve to port 443 → localhost
+- `claw-hq doctor` — config + OpenClaw reachability check
 - `claw-hq help`
 
 ## Deployment shapes
 
-| Shape | OpenClaw runs | Claw HQ runs | Reach | Setup |
-|---|---|---|---|---|
-| Single-host (default) | local | same machine | localhost / LAN | `init` → pick "local" or "lan" |
-| Tailnet | local | same machine | every device on user's Tailnet | `init` → "tailnet" + shared-secret |
-| Tailscale Serve (HTTPS) | local | same machine | Tailnet with TLS via Tailscale cert | as above + `tailscale serve` |
-| Custom VPN | local | same machine | VPN subnet | as Tailnet |
-| VPS-relay | home machine | tiny VPS | public URL, tunnel from home | `init` on VPS + `pair` at home |
-| Cloudflare Tunnel | local | same machine | public URL via Cloudflare | as single-host + `cloudflared` |
-| Behind reverse proxy | local | same machine | as your nginx/Caddy | as single-host + proxy_pass |
+| Shape | OpenClaw runs | Claw HQ runs | Reach |
+|---|---|---|---|
+| Single-host (default) | local | same machine | localhost / LAN |
+| Tailnet | local | same machine | every Tailnet device |
+| Tailscale Serve (HTTPS) | local | same machine | Tailnet + automatic TLS |
+| Custom VPN | local | same machine | VPN subnet |
+| VPS-relay | home machine | tiny VPS | public URL, outbound tunnel from home |
+| Cloudflare Tunnel | local | same machine | public URL via Cloudflare |
+| Reverse proxy | local | same machine | as your nginx/Caddy/Traefik |
 
 ## Architecture
 
 ```
-[ Browser / PWA / Native wrapper ]
-   │  cookie-authed ws (or shared-secret token, or no auth in trusted-lan)
+[ Browser / PWA / APK ]
+   │  cookie-authed ws (or shared-secret token, or open in trusted-lan)
    ▼
-[ Claw HQ Server ]          ← single-host single process, OR split for VPS-relay
+[ Claw HQ Server ] ← single-host single process, or split for VPS-relay
    │  loopback ws (or outbound WS for VPS-relay shape)
    ▼
-[ Tunnel module ]           ← does OpenClaw handshake transparently
+[ Tunnel module ] ← does OpenClaw handshake transparently
    │  ws://127.0.0.1:18789
    ▼
 [ User's OpenClaw Gateway ]
+   │
+   ▼
+[ @claw-hq/openclaw-plugin ] ← registers clawhq.* RPCs for project chats,
+                               memory, task toggles, plugin management
 ```
 
-The browser never sees OpenClaw's shared-secret token. The tunnel module does the `connect` handshake (using `client.id: "gateway-client"` + `client.mode: "backend"`, the trusted-loopback path) on each browser client's behalf and emits a synthetic `claw.session_ready` event when the Gateway session is live. From there it's pure passthrough.
+Browser never sees OpenClaw's shared-secret token. The tunnel does the `connect` handshake via the trusted-loopback path (`client.mode: "backend"` + `client.id: "gateway-client"`) and emits a synthetic `claw.session_ready` event when the Gateway session is live.
 
 ## Repo layout
 
-- `apps/cli` — `@claw-hq/cli` package, user-facing entrypoint (`claw-hq init/start/pair/doctor`)
-- `apps/cloud-relay` — Fastify HTTP+WS server with three pluggable auth modes
-- `apps/tunnel-agent` — outbound WSS to relay, per-client OpenClaw Gateway sessions
+- `apps/cli` — `@claw-hq/cli`, user-facing entrypoint
+- `apps/cloud-relay` — Fastify HTTP+WS server with three pluggable auth modes, push delivery, docs site
+- `apps/tunnel-agent` — outbound WS to relay, per-client OpenClaw Gateway sessions
 - `apps/web` — Vite + React + TS SPA, PWA-installable
-- `packages/protocol-types` — shared TS types over OpenClaw Gateway Protocol v4
+- `apps/android` — native Kotlin WebView + FCM APK
+- `apps/openclaw-plugin` — `@claw-hq/openclaw-plugin`, registers `clawhq.*` RPCs
+- `packages/protocol-types` — shared TS types over Gateway Protocol v4
 
 ## Status
 
-- v0.1 — local-via-Tailscale multi-tenant SaaS prototype (superseded)
-- **v0.2 — IN PROGRESS** — single-tenant self-hosted product with CLI + three auth modes + Dockerfile + install.sh + PWA. Pivot rationale in `BRIEF.md`. Native wrappers (TWA, Tauri) queued for v0.3.
+- **v0.2.1** — RELEASED. Self-hostable engine + native APK + comprehensive nav coverage + docs site at `/docs`. See [CHANGELOG](#changelog) below.
 
-Built and run on jesse-Legion-7-16IRX9 as a systemd user service (`claw-hq.service`); end-to-end verified at `http://100.88.29.65:3838/` from the Tailnet.
+## Changelog
+
+### v0.2.1 (2026-06-14)
+
+- Inline diff rendering for `Edit` / `Write` / `MultiEdit` tool calls
+- Settings → Plugins tab — `clawhq.plugins.{list,search,install,uninstall}` shelling to `openclaw plugins ...`
+- Nodes nav page — pair phones as camera/mic/canvas nodes
+- First-run OpenClaw install assistant with platform-aware install commands + auto-poll
+- Docs site at `/docs/*` (8 pages, dep-free renderer) + `/docs/latest-version.json` manifest
+- TLS via Tailscale Serve (code + docs)
+- APK 0.4.6 — self-update via `PackageInstaller`, push deep links, voice STT
+- Cron add/edit from UI
+- AskUserQuestion tap-cards in chat
+- Inline approval cards + Approvals nav badge
+- Skills per-row install
+- Workspace + project-scoped memory editor
+- Cross-device chat live feed, file uploads, image thumbnails, full-text search
+
+### v0.2.0 (2026-06-13)
+
+- Self-hostable engine pivot — single-tenant, three auth modes
+- CLI (`init`/`start`/`pair`/`doctor`)
+- Dockerfile + install.sh
+- PWA-installable web client
+- Native APK with FCM push notifications
+- Phase 5 v0.5.0 — Sessions, Channels, MCPs, Skills, Models, Approvals, Doctor, RPC Console pages
+- Phase A OHQ-parity — sidebar + chat aesthetic
 
 ## License
 
-UNLICENSED for now. License decision queued.
+UNLICENSED for now. License decision queued before broader public release.
+
+## Contributing
+
+Issues: <https://github.com/crispytoast/claw-hq/issues>. Include `claw-hq doctor` output.

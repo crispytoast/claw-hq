@@ -44,7 +44,7 @@ The container's entrypoint seeds a default `config.json` on first run. Mount `~/
 ## From source
 
 ```bash
-git clone https://github.com/your-org/claw-hq.git
+git clone https://github.com/crispytoast/claw-hq.git
 cd claw-hq
 pnpm install
 pnpm --filter @claw-hq/cli dev init

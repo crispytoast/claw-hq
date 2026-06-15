@@ -295,7 +295,7 @@ export async function registerDocsRoutes(fastify: FastifyInstance): Promise<void
     reply.header("Cache-Control", "public, max-age=60");
     return {
       version: CLAW_HQ_VERSION,
-      releaseUrl: `https://github.com/your-org/claw-hq/releases/tag/v${CLAW_HQ_VERSION}`,
+      releaseUrl: `https://github.com/crispytoast/claw-hq/releases/tag/v${CLAW_HQ_VERSION}`,
       releasedAt: null,
     };
   });
