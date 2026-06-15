@@ -1727,6 +1727,128 @@ a:hover { text-decoration: underline; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* ---------------- Config editor page ---------------- */
+.config-editor-wrap {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  height: calc(100vh - 200px);
+  min-height: 480px;
+}
+.config-editor-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev1);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.config-editor-count {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  margin-bottom: 6px;
+}
+.config-editor-rows {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+.config-editor-row {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.config-editor-row:hover { background: var(--bg-elev2); }
+.config-editor-row.active {
+  border-color: var(--cyan);
+  background: rgba(46, 204, 217, 0.08);
+}
+.config-editor-row-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+.config-editor-row-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.config-editor-row-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.config-editor-pane {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev1);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+.config-editor-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.config-editor-pane-path {
+  font-size: 0.9rem;
+  font-weight: 600;
+  word-break: break-all;
+}
+.config-editor-pane-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.config-editor-pane-desc {
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.config-editor-pane-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.config-editor-pane-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+}
+.config-editor-pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+@media (max-width: 900px) {
+  .config-editor-wrap {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .config-editor-list { max-height: 360px; }
+}
+
 .diff-more,
 .diff-empty {
   color: var(--muted-foreground);

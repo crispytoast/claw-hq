@@ -21,6 +21,7 @@ import { DoctorPage } from "./pages/DoctorPage.js";
 import { RpcConsolePage } from "./pages/RpcConsolePage.js";
 import { SessionsPage } from "./pages/SessionsPage.js";
 import { NodesPage } from "./pages/NodesPage.js";
+import { ConfigEditorPage } from "./pages/ConfigEditorPage.js";
 
 type PageKey = SidebarPage;
 
@@ -86,6 +87,7 @@ export function ChatApp({ user, onLogout }: Props) {
       "/channels": "channels",
       "/cron": "cron",
       "/nodes": "nodes",
+      "/config": "config",
       "/doctor": "doctor",
       "/rpc": "rpc",
       "/sessions": "sessions",
@@ -477,6 +479,7 @@ export function ChatApp({ user, onLogout }: Props) {
         {page === "approvals" && <ApprovalsPage client={clientRef.current} status={status} />}
         {page === "cron" && <CronPage client={clientRef.current} status={status} />}
         {page === "nodes" && <NodesPage client={clientRef.current} status={status} />}
+        {page === "config" && <ConfigEditorPage client={clientRef.current} status={status} />}
         {page === "doctor" && <DoctorPage client={clientRef.current} status={status} />}
         {page === "rpc" && <RpcConsolePage client={clientRef.current} status={status} />}
       </main>

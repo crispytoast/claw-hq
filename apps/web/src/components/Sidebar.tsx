@@ -14,6 +14,7 @@ export type SidebarPage =
   | "approvals"
   | "cron"
   | "nodes"
+  | "config"
   | "doctor"
   | "rpc"
   | "settings";
@@ -36,6 +37,7 @@ const STATIC_NAV: NavItem[] = [
   { id: "approvals",   label: "Approvals",   icon: "✋" },
   { id: "cron",        label: "Cron",        icon: "⏰" },
   { id: "nodes",       label: "Nodes",       icon: "📱" },
+  { id: "config",      label: "Config",      icon: "⚙️" },
   { id: "doctor",      label: "Doctor",      icon: "🩺" },
   { id: "rpc",         label: "RPC",         icon: "🔌" },
   { id: "settings",    label: "Settings",    icon: "⚙️" },
