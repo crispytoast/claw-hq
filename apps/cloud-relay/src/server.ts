@@ -17,6 +17,7 @@ import { registerSystemRoutes } from "./system.js";
 import { registerPushRoutes } from "./push.js";
 import { registerUploadsRoutes } from "./uploads.js";
 import { registerInstallRoutes } from "./install.js";
+import { registerDocsRoutes } from "./docs.js";
 import { registerWsRoutes } from "./ws-routing.js";
 
 export interface ServerHandle {
@@ -47,6 +48,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   await registerPushRoutes(fastify, { db, config });
   await registerUploadsRoutes(fastify, { db, config });
   await registerInstallRoutes(fastify, { config });
+  await registerDocsRoutes(fastify);
   registerWsRoutes(fastify, { db, config, inProcessAgentToken: opts.inProcessAgentToken });
 
   if (existsSync(config.webDistPath)) {
@@ -60,6 +62,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
         || req.url.startsWith("/ws/")
         || req.url.startsWith("/uploads/")
         || req.url.startsWith("/install/")
+        || req.url.startsWith("/docs/")
+        || req.url === "/docs"
       ) {
         reply.code(404);
         return { error: "not found" };
