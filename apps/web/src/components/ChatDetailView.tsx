@@ -3,32 +3,45 @@ import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { lineDiff, parseFileEditArgs, statsFor, toHunks } from "./diff.js";
 import type { DiffHunk, ParsedFileEdit } from "./diff.js";
+import { extractHistoryAttachments, type HistoryAttachment } from "./history-attachments.js";
+
+type AttachmentSource =
+  | { kind: "file"; file: File }
+  | { kind: "remote"; url: string };
 
 interface UploadedAttachment {
   /** Local-only id so we can dedupe + drop entries from the pending list. */
   localId: string;
-  /** SHA-256 returned by /api/uploads. */
+  /** SHA-256 returned by /api/uploads (or extracted from a history `/uploads/<id>` URL). */
   uploadId: string;
   url: string;
   filename: string;
   mimeType: string;
   size: number;
-  /** Kept so we can re-read bytes as base64 for chat.send. */
-  file: File;
-  /** Local blob: URL for image previews. Revoke when the chip is removed. */
+  /** Where the bytes come from at send time. File = freshly picked; remote =
+   *  re-attached from chat history. */
+  source: AttachmentSource;
+  /** Image-preview URL. For File sources this is a blob: URL we revoke; for
+   *  remote sources it's the `/uploads/<id>` URL itself (nothing to revoke). */
   previewUrl?: string;
 }
 
-async function fileToBase64(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  // btoa over a binary string. Build it from a Uint8Array.
-  const bytes = new Uint8Array(buf);
+function bytesToBase64(bytes: Uint8Array): string {
   let bin = "";
   const CHUNK = 0x8000;
   for (let i = 0; i < bytes.length; i += CHUNK) {
     bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
   }
   return btoa(bin);
+}
+
+async function attachmentBytesBase64(a: UploadedAttachment): Promise<string> {
+  if (a.source.kind === "file") {
+    return bytesToBase64(new Uint8Array(await a.source.file.arrayBuffer()));
+  }
+  const res = await fetch(a.source.url, { credentials: "same-origin" });
+  if (!res.ok) throw new Error(`re-fetch upload failed: ${res.status}`);
+  return bytesToBase64(new Uint8Array(await res.arrayBuffer()));
 }
 
 interface UploadResponse {
@@ -283,6 +296,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
   const [uploading, setUploading] = useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = useState(false);
+  const [showHistoryPicker, setShowHistoryPicker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const sessionKey = useMemo(() => sessionKeyFor(chatId), [chatId]);
@@ -296,6 +310,23 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   inputRef.current = input;
   const voiceAvailable = typeof window !== "undefined"
     && typeof (window as unknown as { ClawHqVoiceBridge?: unknown }).ClawHqVoiceBridge !== "undefined";
+
+  // Derive the list of prior uploads in this chat from the persisted bubbles
+  // so the composer can offer a "re-attach from history" picker without a
+  // round-trip. Recomputes when items change (new persisted attachments
+  // appear after each successful send).
+  const historyAttachmentTexts = useMemo(
+    () => items.map((it) => (it.kind === "message" ? it.message.text : "")),
+    [items],
+  );
+  const historyAttachments = useMemo(
+    () => extractHistoryAttachments(historyAttachmentTexts),
+    [historyAttachmentTexts],
+  );
+  const activeUploadIds = useMemo(
+    () => new Set(attachments.map((a) => a.uploadId)),
+    [attachments],
+  );
 
   const noteOwnPersist = useCallback((id: string) => {
     recentlyPersistedIdsRef.current.add(id);
@@ -324,7 +355,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             filename: res.filename,
             mimeType: res.mimeType,
             size: res.size,
-            file,
+            source: { kind: "file", file },
             previewUrl,
           };
           setAttachments((prev) => [...prev, next]);
@@ -343,10 +374,12 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   );
 
   // Track all blob: URLs we've created so we can revoke on unmount without
-  // chasing the latest `attachments` snapshot from a stale closure.
+  // chasing the latest `attachments` snapshot from a stale closure. Remote
+  // `/uploads/<id>` URLs from re-attached history aren't tracked here — those
+  // belong to the relay, not our object-URL pool.
   const previewUrlsRef = useRef<Set<string>>(new Set());
   const revokePreviewUrl = useCallback((url: string | undefined) => {
-    if (!url) return;
+    if (!url || !url.startsWith("blob:")) return;
     URL.revokeObjectURL(url);
     previewUrlsRef.current.delete(url);
   }, []);
@@ -360,6 +393,43 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       });
     },
     [revokePreviewUrl],
+  );
+
+  const addHistoryAttachment = useCallback(
+    async (entry: HistoryAttachment) => {
+      // Dedupe: if this upload is already on the composer, no-op.
+      const already = attachments.some((a) => a.uploadId === entry.uploadId);
+      if (already) return;
+      try {
+        // HEAD avoids re-downloading the file just to learn its mime + size for
+        // the chip. The relay's static file route supports HEAD via fastify's
+        // GET→HEAD shim.
+        const head = await fetch(entry.url, { method: "HEAD", credentials: "same-origin" });
+        if (!head.ok) throw new Error(`HEAD failed: ${head.status}`);
+        const ct = head.headers.get("content-type") ?? "application/octet-stream";
+        const mimeType = ct.split(";")[0]?.trim() ?? "application/octet-stream";
+        const sizeStr = head.headers.get("content-length");
+        const size = sizeStr ? Number.parseInt(sizeStr, 10) : 0;
+        const isImage = mimeType.startsWith("image/");
+        const next: UploadedAttachment = {
+          localId: newLocalId(),
+          uploadId: entry.uploadId,
+          url: entry.url,
+          filename: entry.filename,
+          mimeType,
+          size,
+          source: { kind: "remote", url: entry.url },
+          // For remote previews we reuse the `/uploads/<id>` URL directly; the
+          // browser handles content negotiation. We don't add it to
+          // previewUrlsRef because we don't own it (no revoke needed).
+          previewUrl: isImage ? entry.url : undefined,
+        };
+        setAttachments((prev) => [...prev, next]);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [attachments],
   );
 
   useEffect(() => {
@@ -1028,7 +1098,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           source: {
             type: "base64",
             media_type: a.mimeType,
-            data: await fileToBase64(a.file),
+            data: await attachmentBytesBase64(a),
           },
         })),
       );
@@ -1202,6 +1272,55 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       </div>
 
       <div className="composer">
+        {showHistoryPicker && (
+          <div className="composer-history-picker">
+            <div className="composer-history-picker-head">
+              <strong>Re-attach from chat history</strong>
+              <button
+                type="button"
+                className="composer-history-picker-close"
+                aria-label="Close"
+                onClick={() => setShowHistoryPicker(false)}
+              >✕</button>
+            </div>
+            {historyAttachments.length === 0 ? (
+              <div className="composer-history-picker-empty">
+                No prior uploads in this chat yet.
+              </div>
+            ) : (
+              <ul className="composer-history-picker-list">
+                {historyAttachments.map((h) => {
+                  const alreadyOn = activeUploadIds.has(h.uploadId);
+                  return (
+                    <li key={h.uploadId}>
+                      <button
+                        type="button"
+                        className="composer-history-picker-row"
+                        disabled={alreadyOn || status.kind !== "ready"}
+                        onClick={() => void addHistoryAttachment(h)}
+                      >
+                        <img
+                          src={h.url}
+                          alt=""
+                          className="composer-history-picker-thumb"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                        <span className="composer-history-picker-name" title={h.filename}>
+                          {h.filename}
+                        </span>
+                        {alreadyOn && (
+                          <span className="composer-history-picker-on">attached</span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
         {(attachments.length > 0 || uploading.size > 0) && (
           <div className="composer-attachments">
             {attachments.map((a) => (
@@ -1262,6 +1381,18 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             disabled={status.kind !== "ready" || pending}
             onClick={() => fileInputRef.current?.click()}
           >＋</button>
+          {historyAttachments.length > 0 && (
+            <button
+              type="button"
+              className={`composer-attach composer-history-trigger ${showHistoryPicker ? "active" : ""}`}
+              aria-label="Attach from history"
+              title={`Re-attach (${historyAttachments.length} prior)`}
+              disabled={status.kind !== "ready" || pending}
+              onClick={() => setShowHistoryPicker((v) => !v)}
+            >
+              📋<span className="composer-history-trigger-badge">{historyAttachments.length}</span>
+            </button>
+          )}
           <input
             ref={fileInputRef}
             type="file"
