@@ -111,6 +111,8 @@ class MainActivity : Activity() {
         val updater = UpdaterBridge(this, wv)
         updaterBridge = updater
         wv.addJavascriptInterface(updater, "ClawHqUpdater")
+        // window.ClawHqBuild — read-only APK identity (versionName/Code).
+        wv.addJavascriptInterface(BuildBridge(this), "ClawHqBuild")
         setContentView(wv)
         val initialUrl = if (initialDeepLink != null) "$relayUrl$initialDeepLink" else relayUrl
         wv.loadUrl(initialUrl)

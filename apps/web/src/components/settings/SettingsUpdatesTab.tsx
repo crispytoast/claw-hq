@@ -13,9 +13,37 @@ interface UpdaterCallback {
   total?: number;
 }
 
+interface BuildBridge {
+  getVersionName(): string;
+  getVersionCode(): number;
+  getApplicationId(): string;
+  getInstallerPackage(): string | null;
+}
+
 function getUpdaterBridge(): UpdaterBridge | null {
   if (typeof window === "undefined") return null;
   return (window as unknown as { ClawHqUpdater?: UpdaterBridge }).ClawHqUpdater ?? null;
+}
+
+function getBuildBridge(): BuildBridge | null {
+  if (typeof window === "undefined") return null;
+  return (window as unknown as { ClawHqBuild?: BuildBridge }).ClawHqBuild ?? null;
+}
+
+function readApkInfo(): { versionName: string; versionCode: number } | null {
+  const b = getBuildBridge();
+  if (!b) return null;
+  try {
+    return { versionName: b.getVersionName(), versionCode: b.getVersionCode() };
+  } catch {
+    return null;
+  }
+}
+
+function formatBuildTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
 }
 
 export function SettingsUpdatesTab() {
@@ -26,7 +54,11 @@ export function SettingsUpdatesTab() {
   const [apkProgress, setApkProgress] = useState<{ bytes: number; total: number } | null>(null);
   const [apkPhase, setApkPhase] = useState<"idle" | "downloading" | "installing" | "error">("idle");
   const [apkErr, setApkErr] = useState<string | null>(null);
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const apkUpdater = getUpdaterBridge();
+  const apk = readApkInfo();
+  const webBuildTime = __APP_BUILD_TIME__;
+  const webGitSha = __APP_GIT_SHA__;
 
   useEffect(() => {
     void (async () => {
@@ -39,6 +71,7 @@ export function SettingsUpdatesTab() {
     setErr("");
     try {
       setCheck(await systemApi.checkUpdates());
+      setLastCheckedAt(Date.now());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -101,10 +134,27 @@ export function SettingsUpdatesTab() {
       </p>
 
       <div className="settings-card">
+        <div className="settings-card-title">What's running</div>
         <dl className="settings-kv">
-          <dt>Current version</dt><dd><code>{info?.current ?? "…"}</code></dd>
-          <dt>Install method</dt><dd>{info?.installMethod ?? "…"}</dd>
+          {apk && (
+            <>
+              <dt>App (APK)</dt>
+              <dd><code>v{apk.versionName}</code> <span className="settings-help" style={{ margin: 0 }}>(build {apk.versionCode})</span></dd>
+            </>
+          )}
+          <dt>Web bundle</dt>
+          <dd>
+            <code>{webGitSha}</code>{" "}
+            <span className="settings-help" style={{ margin: 0 }}>built {formatBuildTime(webBuildTime)}</span>
+          </dd>
+          <dt>Relay (server)</dt>
+          <dd><code>v{info?.current ?? "…"}</code> <span className="settings-help" style={{ margin: 0 }}>({info?.installMethod ?? "…"})</span></dd>
         </dl>
+        {!apk && (
+          <p className="settings-help" style={{ marginTop: "0.5rem", marginBottom: 0 }}>
+            Open this page inside the Claw HQ APK to see the installed app version too.
+          </p>
+        )}
       </div>
 
       <div style={{ marginTop: "1rem" }}>
@@ -157,13 +207,25 @@ export function SettingsUpdatesTab() {
               <div className="settings-card-title">
                 <span className="dot dot-amber" /> Update available — v{check.latest}
               </div>
-              <p>You're on v{check.current}. To update:</p>
+              <p>Relay is on v{check.current}. To update:</p>
               <UpdateInstructions installMethod={info?.installMethod ?? "unknown"} latest={check.latest} releaseUrl={check.releaseUrl} />
             </>
           ) : (
-            <div className="settings-card-title">
-              <span className="dot dot-green" /> You're up to date (v{check.current})
-            </div>
+            <>
+              <div className="settings-card-title">
+                <span className="dot dot-green" /> Relay is up to date (v{check.current})
+              </div>
+              {check.releaseUrl && (
+                <p className="settings-help" style={{ marginTop: "0.5rem", marginBottom: 0 }}>
+                  Latest release: <a href={check.releaseUrl} target="_blank" rel="noopener noreferrer">{check.releaseUrl}</a>
+                </p>
+              )}
+            </>
+          )}
+          {lastCheckedAt && (
+            <p className="settings-help" style={{ marginTop: "0.5rem", marginBottom: 0 }}>
+              Checked {new Date(lastCheckedAt).toLocaleTimeString()}.
+            </p>
           )}
         </div>
       )}
