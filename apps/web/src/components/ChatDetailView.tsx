@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
+import { lineDiff, parseFileEditArgs, statsFor, toHunks } from "./diff.js";
+import type { DiffHunk, ParsedFileEdit } from "./diff.js";
 
 interface UploadedAttachment {
   /** Local-only id so we can dedupe + drop entries from the pending list. */
@@ -1342,6 +1344,11 @@ function ToolBlock({ tool }: { tool: DisplayTool }) {
   const resultText = formatToolValue(tool.result);
   const RESULT_INLINE_CAP = 4000;
   const truncated = resultText.length > RESULT_INLINE_CAP;
+  // Edit/Write/MultiEdit get rendered as a real diff instead of raw args JSON.
+  const fileEdits = useMemo(
+    () => parseFileEditArgs(tool.name, tool.args),
+    [tool.name, tool.args],
+  );
   return (
     <div className={`tool-block ${tool.status}`}>
       <button
@@ -1351,9 +1358,10 @@ function ToolBlock({ tool }: { tool: DisplayTool }) {
         aria-expanded={open}
       >
         <span className="tool-block-chevron">{open ? "▾" : "▸"}</span>
-        <span className="tool-block-icon">🔧</span>
+        <span className="tool-block-icon">{fileEdits ? "📝" : "🔧"}</span>
         <span className="tool-block-name">{tool.name}</span>
         {subtitle && <span className="tool-block-subtitle">{subtitle}</span>}
+        {fileEdits && <DiffHeaderStats edits={fileEdits} />}
         <span className={`status-pill ${statusClass}`}>
           <span className="status-dot" />
           {statusLabel}
@@ -1361,11 +1369,15 @@ function ToolBlock({ tool }: { tool: DisplayTool }) {
       </button>
       {open && (
         <div className="tool-block-body">
-          {argsText && (
-            <>
-              <div className="tool-block-label">args</div>
-              <pre className="tool-block-pre">{argsText}</pre>
-            </>
+          {fileEdits ? (
+            <DiffView edits={fileEdits} />
+          ) : (
+            argsText && (
+              <>
+                <div className="tool-block-label">args</div>
+                <pre className="tool-block-pre">{argsText}</pre>
+              </>
+            )
           )}
           {tool.status !== "running" && (
             <>
@@ -1379,6 +1391,112 @@ function ToolBlock({ tool }: { tool: DisplayTool }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function DiffHeaderStats({ edits }: { edits: ParsedFileEdit[] }) {
+  const totals = useMemo(() => {
+    let added = 0;
+    let deleted = 0;
+    for (const e of edits) {
+      const s = statsFor(lineDiff(e.before, e.after));
+      added += s.added;
+      deleted += s.deleted;
+    }
+    return { added, deleted };
+  }, [edits]);
+  if (!totals.added && !totals.deleted) return null;
+  return (
+    <span className="tool-block-diffstat">
+      {totals.added > 0 && <span className="diff-add">+{totals.added}</span>}
+      {totals.deleted > 0 && <span className="diff-del">−{totals.deleted}</span>}
+    </span>
+  );
+}
+
+function DiffView({ edits }: { edits: ParsedFileEdit[] }) {
+  return (
+    <div className="diff-view">
+      {edits.map((edit, i) => (
+        <DiffFile key={i} edit={edit} index={edits.length > 1 ? i + 1 : undefined} />
+      ))}
+    </div>
+  );
+}
+
+const DIFF_LINE_HARD_CAP = 4000;
+
+function DiffFile({ edit, index }: { edit: ParsedFileEdit; index?: number }) {
+  const { hunks, more } = useMemo(() => {
+    const lines = lineDiff(edit.before, edit.after);
+    const allHunks = toHunks(lines);
+    const total = allHunks.reduce((acc, h) => acc + h.lines.length, 0);
+    if (total <= DIFF_LINE_HARD_CAP) return { hunks: allHunks, more: 0 };
+    // Trim from the bottom to keep the head readable; surface the cut count.
+    let kept = 0;
+    const trimmed: DiffHunk[] = [];
+    for (const h of allHunks) {
+      if (kept + h.lines.length <= DIFF_LINE_HARD_CAP) {
+        trimmed.push(h);
+        kept += h.lines.length;
+      } else {
+        const room = DIFF_LINE_HARD_CAP - kept;
+        if (room > 0) trimmed.push({ header: h.header, lines: h.lines.slice(0, room) });
+        break;
+      }
+    }
+    return { hunks: trimmed, more: total - kept };
+  }, [edit]);
+  const stats = useMemo(() => {
+    let added = 0;
+    let deleted = 0;
+    for (const h of hunks) {
+      for (const l of h.lines) {
+        if (l.kind === "add") added++;
+        else if (l.kind === "del") deleted++;
+      }
+    }
+    return { added, deleted };
+  }, [hunks]);
+  return (
+    <div className="diff-file">
+      <div className="diff-file-header">
+        <span className="diff-file-path">
+          {index ? <span className="diff-file-index">#{index}</span> : null}
+          {edit.filePath}
+        </span>
+        {edit.mode === "new-file" && <span className="diff-file-tag">new file</span>}
+        <span className="diff-file-stats">
+          {stats.added > 0 && <span className="diff-add">+{stats.added}</span>}
+          {stats.deleted > 0 && <span className="diff-del">−{stats.deleted}</span>}
+        </span>
+      </div>
+      <div className="diff-file-body">
+        {hunks.length === 0 ? (
+          <div className="diff-empty">no changes</div>
+        ) : (
+          hunks.map((h, i) => (
+            <div key={i} className="diff-hunk">
+              <div className="diff-hunk-header">{h.header}</div>
+              {h.lines.map((l, j) => {
+                const cls =
+                  l.kind === "add" ? "add" : l.kind === "del" ? "del" : "ctx";
+                const sign = l.kind === "add" ? "+" : l.kind === "del" ? "−" : " ";
+                return (
+                  <div key={j} className={`diff-line ${cls}`}>
+                    <span className="diff-line-num old">{l.oldNumber ?? ""}</span>
+                    <span className="diff-line-num new">{l.newNumber ?? ""}</span>
+                    <span className="diff-line-sign">{sign}</span>
+                    <span className="diff-line-text">{l.text || " "}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ))
+        )}
+        {more > 0 && <div className="diff-more">… {more} more lines truncated</div>}
+      </div>
     </div>
   );
 }

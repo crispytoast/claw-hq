@@ -1492,6 +1492,108 @@ a:hover { text-decoration: underline; }
   margin: 0;
 }
 .tool-block-pre-error { color: #ff8a8a; }
+.tool-block-diffstat {
+  margin-left: auto;
+  margin-right: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  display: inline-flex;
+  gap: 6px;
+}
+.diff-add { color: #4ec07a; font-weight: 600; }
+.diff-del { color: #d56565; font-weight: 600; }
+
+/* Inline file-edit diff. Rendered in place of the raw args pre for
+ * Edit/Write/MultiEdit. Single column unified-diff style with paired old/new
+ * line gutters — the side-by-side cost-per-px isn't worth it on phone widths. */
+.diff-view { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.diff-file {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev2);
+  overflow: hidden;
+}
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+}
+.diff-file-path { font-weight: 600; word-break: break-all; }
+.diff-file-index {
+  color: var(--muted-foreground);
+  margin-right: 4px;
+}
+.diff-file-tag {
+  background: rgba(58, 160, 90, 0.18);
+  color: #6fcf97;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.diff-file-stats {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+}
+.diff-file-body {
+  max-height: 480px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+.diff-hunk + .diff-hunk { border-top: 1px solid var(--border); }
+.diff-hunk-header {
+  background: var(--bg-elev3, var(--bg-elev1));
+  color: var(--muted-foreground);
+  padding: 2px 10px;
+  font-size: 0.7rem;
+}
+.diff-line {
+  display: grid;
+  grid-template-columns: 36px 36px 14px 1fr;
+  align-items: start;
+  padding: 0 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diff-line.add { background: rgba(58, 160, 90, 0.12); }
+.diff-line.del { background: rgba(198, 69, 69, 0.14); }
+.diff-line-num {
+  color: var(--muted-foreground);
+  text-align: right;
+  padding-right: 6px;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.diff-line.add .diff-line-num.old,
+.diff-line.del .diff-line-num.new { color: transparent; }
+.diff-line-sign {
+  text-align: center;
+  user-select: none;
+  font-weight: 600;
+}
+.diff-line.add .diff-line-sign { color: #4ec07a; }
+.diff-line.del .diff-line-sign { color: #d56565; }
+.diff-line.ctx .diff-line-sign { color: var(--muted-foreground); }
+.diff-line-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diff-more,
+.diff-empty {
+  color: var(--muted-foreground);
+  padding: 6px 10px;
+  font-size: 0.74rem;
+  border-top: 1px solid var(--border);
+}
 
 /* Inline exec-approval card. Same shell as .tool-block so it sits in the
  * arrival-order item list cleanly, but with maroon accent + action row. */
