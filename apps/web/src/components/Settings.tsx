@@ -1,28 +1,33 @@
 import { useState } from "react";
 import type { User } from "../api.js";
+import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import { SettingsOpenClawTab } from "./settings/SettingsOpenClawTab.js";
 import { SettingsUpdatesTab } from "./settings/SettingsUpdatesTab.js";
 import { SettingsNotificationsTab } from "./settings/SettingsNotificationsTab.js";
 import { SettingsAboutTab } from "./settings/SettingsAboutTab.js";
 import { SettingsPairingTab } from "./settings/SettingsPairingTab.js";
+import { SettingsPluginsTab } from "./settings/SettingsPluginsTab.js";
 
-export type SettingsTab = "openclaw" | "pairing" | "notifications" | "updates" | "about";
+export type SettingsTab = "openclaw" | "pairing" | "plugins" | "notifications" | "updates" | "about";
 
 interface Props {
   user: User;
   onClose(): void;
   initialTab?: SettingsTab;
+  client: GatewayClient | null;
+  status: ConnectionStatus;
 }
 
 const TABS: Array<{ key: SettingsTab; label: string }> = [
   { key: "openclaw", label: "OpenClaw" },
   { key: "pairing", label: "Pairing" },
+  { key: "plugins", label: "Plugins" },
   { key: "notifications", label: "Notifications" },
   { key: "updates", label: "Updates" },
   { key: "about", label: "About" },
 ];
 
-export function Settings({ user, onClose, initialTab }: Props) {
+export function Settings({ user, onClose, initialTab, client, status }: Props) {
   const [tab, setTab] = useState<SettingsTab>(initialTab ?? "openclaw");
 
   return (
@@ -48,6 +53,7 @@ export function Settings({ user, onClose, initialTab }: Props) {
       <div className="settings-body">
         {tab === "openclaw" && <SettingsOpenClawTab />}
         {tab === "pairing" && <SettingsPairingTab />}
+        {tab === "plugins" && <SettingsPluginsTab client={client} status={status} />}
         {tab === "notifications" && <SettingsNotificationsTab />}
         {tab === "updates" && <SettingsUpdatesTab />}
         {tab === "about" && <SettingsAboutTab user={user} />}

@@ -18,9 +18,15 @@ import {
   listMemoryFiles,
   putMemoryFile,
 } from "./memory.js";
+import {
+  pluginsInstall,
+  pluginsList,
+  pluginsSearch,
+  pluginsUninstall,
+} from "./plugins.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.12";
+const PLUGIN_VERSION = "0.0.13";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -400,6 +406,10 @@ export default definePluginEntry({
             "clawhq.memory.get",
             "clawhq.memory.put",
             "clawhq.memory.delete",
+            "clawhq.plugins.list",
+            "clawhq.plugins.search",
+            "clawhq.plugins.install",
+            "clawhq.plugins.uninstall",
           ],
         });
       },
@@ -1120,6 +1130,137 @@ export default definePluginEntry({
         }
       },
       { scope: "operator.write" },
+    );
+
+    // --- plugin management bridge: shells out to `openclaw plugins ...` ---
+
+    api.registerGatewayMethod(
+      "clawhq.plugins.list",
+      async ({ respond, params }) => {
+        try {
+          const p = (params ?? {}) as { onlyEnabled?: unknown };
+          const result = await pluginsList({
+            onlyEnabled: p.onlyEnabled === true,
+          });
+          respond(true, { plugins: result.plugins });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.plugins.search",
+      async ({ respond, params }) => {
+        try {
+          const p = (params ?? {}) as { query?: unknown };
+          const query = typeof p.query === "string" ? p.query : "";
+          const result = await pluginsSearch(query);
+          respond(true, { hits: result.hits });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.plugins.install",
+      async ({ respond, params, context }) => {
+        try {
+          const p = (params ?? {}) as { spec?: unknown };
+          const spec = typeof p.spec === "string" ? p.spec.trim() : "";
+          if (!spec) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: spec",
+            });
+            return;
+          }
+          const result = await pluginsInstall(spec);
+          if (!result.ok) {
+            respond(false, undefined, {
+              code: "INSTALL_FAILED",
+              message: `openclaw plugins install ${spec} exited ${result.exitCode}: ${
+                result.stderr.trim() || result.stdout.trim()
+              }`,
+            });
+            return;
+          }
+          respond(true, { spec, exitCode: result.exitCode });
+          try {
+            context.broadcast("plugin.clawhq.plugins.changed", {
+              kind: "installed",
+              spec,
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.plugins.changed broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.admin" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.plugins.uninstall",
+      async ({ respond, params, context }) => {
+        try {
+          const p = (params ?? {}) as { id?: unknown };
+          const id = typeof p.id === "string" ? p.id.trim() : "";
+          if (!id) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: id",
+            });
+            return;
+          }
+          const result = await pluginsUninstall(id);
+          if (!result.ok) {
+            respond(false, undefined, {
+              code: "UNINSTALL_FAILED",
+              message: `openclaw plugins uninstall ${id} exited ${result.exitCode}: ${
+                result.stderr.trim() || result.stdout.trim()
+              }`,
+            });
+            return;
+          }
+          respond(true, { id, exitCode: result.exitCode });
+          try {
+            context.broadcast("plugin.clawhq.plugins.changed", {
+              kind: "uninstalled",
+              id,
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.plugins.changed broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.admin" },
     );
   },
 });

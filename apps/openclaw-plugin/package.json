@@ -1,6 +1,6 @@
 {
   "name": "@claw-hq/openclaw-plugin",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "private": true,
   "description": "OpenClaw plugin that backs Claw HQ — project-scoped chats, sub-project task toggles, file uploads, cross-device live feed.",
   "license": "UNLICENSED",

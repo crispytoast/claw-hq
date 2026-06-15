@@ -301,6 +301,8 @@ export function ChatApp({ user, onLogout }: Props) {
         user={user}
         onClose={() => setShowSettings(false)}
         initialTab={settingsTab}
+        client={clientRef.current}
+        status={status}
       />
     );
   }
