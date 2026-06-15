@@ -20,8 +20,7 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
-
-const CLAW_HQ_VERSION = "0.2.1";
+import { CLAW_HQ_VERSION } from "./version.js";
 
 interface DocPage {
   slug: string;

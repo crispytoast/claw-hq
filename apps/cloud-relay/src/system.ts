@@ -14,9 +14,10 @@ import { WebSocket } from "ws";
 import { resolveOwner } from "./auth.js";
 import type { ResolvedConfig } from "./config.js";
 import { discoverOpenClaw } from "./openclaw-discovery.js";
+import { CLAW_HQ_VERSION, DEFAULT_RELEASES_URL } from "./version.js";
 
-/** Current Claw HQ relay version. Bumped on every release. */
-export const CLAW_HQ_VERSION = "0.3.0-dev";
+// Re-export so existing imports keep working.
+export { CLAW_HQ_VERSION } from "./version.js";
 
 interface SystemDeps {
   db: Database.Database;
@@ -82,7 +83,7 @@ export async function registerSystemRoutes(fastify: FastifyInstance, deps: Syste
     //   https://api.github.com/repos/<owner>/claw-hq/releases/latest
     // Until then, just confirm we're current.
     try {
-      const releasesUrl = process.env.CLAW_HQ_RELEASES_URL ?? "";
+      const releasesUrl = process.env.CLAW_HQ_RELEASES_URL ?? DEFAULT_RELEASES_URL;
       if (!releasesUrl) {
         return {
           current: CLAW_HQ_VERSION,

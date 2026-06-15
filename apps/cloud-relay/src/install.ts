@@ -141,6 +141,12 @@ export async function registerInstallRoutes(
     reply.type("application/vnd.android.package-archive");
     reply.header("Content-Disposition", "attachment; filename=claw-hq.apk");
     reply.header("Content-Length", String(st.size));
+    // Chrome on Android caches .apk downloads aggressively. Without no-store
+    // a stale APK can keep getting served from cache even after the file on
+    // disk changes — surfaces as "I installed but it's still the old version".
+    // ETag derived from size+mtime lets conditional requests work.
+    reply.header("Cache-Control", "no-store, must-revalidate");
+    reply.header("ETag", `"${st.size}-${st.mtimeMs.toFixed(0)}"`);
     return reply.send(createReadStream(path));
   });
 }

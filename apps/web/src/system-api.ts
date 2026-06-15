@@ -2,10 +2,17 @@
  * Tiny fetch helpers for /api/system/*.
  */
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Only set Content-Type when there's an actual body. Fastify v5 rejects
+  // bodyless POSTs that advertise application/json with FST_ERR_CTP_EMPTY_JSON_BODY
+  // (= 400 Bad Request). Same gotcha as api.ts fixed in Phase C step 16.
+  const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined ?? {}) };
+  if (init.body !== undefined && init.body !== null && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await fetch(path, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
     ...init,
+    headers,
   });
   if (!res.ok) {
     let body: unknown;
