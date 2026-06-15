@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type PairingToken } from "../../api.js";
+import { requireSudo } from "../SudoGate.js";
 
 interface IssuedToken {
   pairingToken: string;
@@ -64,7 +65,13 @@ export function SettingsPairingTab() {
 
   const revoke = useCallback(
     async (token: string, label: string) => {
-      if (!window.confirm(`Revoke pairing for "${label}"? Any device using this token will lose access.`)) return;
+      const allowed = await requireSudo({
+        title: "Revoke pairing token",
+        body: `Removes the pairing token for "${label}". The device using it will be kicked immediately and will need a fresh token to reconnect.`,
+        verb: "Revoke",
+        danger: true,
+      });
+      if (!allowed) return;
       setRevoking((s) => new Set(s).add(token));
       try {
         await api.revokePairingToken(token);

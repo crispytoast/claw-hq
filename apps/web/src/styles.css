@@ -1727,6 +1727,54 @@ a:hover { text-decoration: underline; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* ---------------- Sudo modal ---------------- */
+.sudo-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+.sudo-modal {
+  background: var(--bg-elev1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  max-width: 460px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+}
+.sudo-modal-icon { font-size: 1.6rem; }
+.sudo-modal-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.sudo-modal-body {
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+.sudo-modal-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--muted-foreground);
+}
+.sudo-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* ---------------- Config editor page ---------------- */
 .config-editor-wrap {
   display: grid;

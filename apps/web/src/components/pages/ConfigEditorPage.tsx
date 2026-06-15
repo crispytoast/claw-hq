@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
+import { requireSudo } from "../SudoGate.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -208,6 +209,18 @@ export function ConfigEditorPage({ client, status }: Props) {
       setSave({ kind: "error", path: selectedLeaf.path, message: parsed.error });
       return;
     }
+    const reloadHint = lookup?.reloadKind === "restart"
+      ? "Saving this path triggers a Gateway restart."
+      : lookup?.reloadKind === "hot"
+        ? "Saving this path triggers a hot reload."
+        : "Saving this path applies without reload.";
+    const allowed = await requireSudo({
+      title: "Edit OpenClaw config",
+      body: `Path: ${selectedLeaf.path}\n${reloadHint}`,
+      verb: "Save",
+      danger: lookup?.reloadKind === "restart",
+    });
+    if (!allowed) return;
     setSave({ kind: "saving", path: selectedLeaf.path });
     try {
       // OpenClaw's config.patch shape varies across releases; try the

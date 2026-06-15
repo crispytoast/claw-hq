@@ -5,6 +5,7 @@ import { Login } from "./components/Login.js";
 import { Setup } from "./components/Setup.js";
 import { ChatApp } from "./components/ChatApp.js";
 import { OpenClawInstallWizard } from "./components/OpenClawInstallWizard.js";
+import { clearSudoGrants } from "./components/SudoGate.js";
 
 type State =
   | { kind: "loading" }
@@ -115,6 +116,7 @@ export function App() {
     <ChatApp
       user={state.user}
       onLogout={async () => {
+        clearSudoGrants();
         await api.logout();
         setState({ kind: "anon" });
       }}

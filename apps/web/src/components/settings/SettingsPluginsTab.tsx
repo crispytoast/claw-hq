@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
+import { requireSudo } from "../SudoGate.js";
 
 interface PluginEntry {
   id: string;
@@ -100,6 +101,12 @@ export function SettingsPluginsTab({ client, status }: Props) {
   const install = useCallback(
     async (spec: string) => {
       if (!client || status.kind !== "ready" || !spec) return;
+      const allowed = await requireSudo({
+        title: "Install plugin",
+        body: `This runs \`openclaw plugins install ${spec}\` on the host. Cold-download installs may take several minutes and pull arbitrary code.`,
+        verb: "Install",
+      });
+      if (!allowed) return;
       setAction({ kind: "running", verb: "install", id: spec });
       try {
         await client.call("clawhq.plugins.install", { spec });
@@ -121,9 +128,13 @@ export function SettingsPluginsTab({ client, status }: Props) {
   const uninstall = useCallback(
     async (id: string) => {
       if (!client || status.kind !== "ready") return;
-      if (!window.confirm(
-        `Uninstall plugin "${id}"? This runs \`openclaw plugins uninstall\` on the host.`,
-      )) return;
+      const allowed = await requireSudo({
+        title: "Uninstall plugin",
+        body: `Removes the "${id}" plugin from the host file system. Anything depending on it stops working until reinstalled.`,
+        verb: "Uninstall",
+        danger: true,
+      });
+      if (!allowed) return;
       setAction({ kind: "running", verb: "uninstall", id });
       try {
         await client.call("clawhq.plugins.uninstall", { id });

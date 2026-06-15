@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
+import { requireSudo } from "../SudoGate.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -165,8 +166,14 @@ export function NodesPage({ client, status }: Props) {
   );
 
   const remove = useCallback(
-    (node: NodeRow) => {
-      if (!window.confirm(`Remove paired node "${node.label ?? node.id}"? It can re-pair later.`)) return;
+    async (node: NodeRow) => {
+      const allowed = await requireSudo({
+        title: "Remove paired node",
+        body: `Removes "${node.label ?? node.id}" from the Gateway's pairing store. The device can re-pair from scratch, but any session pinned to it will fail until then.`,
+        verb: "Remove",
+        danger: true,
+      });
+      if (!allowed) return;
       void callMutation("node.pair.remove", { id: node.id }, "remove", node.id);
     },
     [callMutation],

@@ -22,6 +22,7 @@ import { RpcConsolePage } from "./pages/RpcConsolePage.js";
 import { SessionsPage } from "./pages/SessionsPage.js";
 import { NodesPage } from "./pages/NodesPage.js";
 import { ConfigEditorPage } from "./pages/ConfigEditorPage.js";
+import { SudoGate } from "./SudoGate.js";
 
 type PageKey = SidebarPage;
 
@@ -483,6 +484,7 @@ export function ChatApp({ user, onLogout }: Props) {
         {page === "doctor" && <DoctorPage client={clientRef.current} status={status} />}
         {page === "rpc" && <RpcConsolePage client={clientRef.current} status={status} />}
       </main>
+      <SudoGate />
     </div>
   );
 }
