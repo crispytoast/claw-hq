@@ -66,6 +66,31 @@ export const api = {
     });
     return user;
   },
+  async loginSharedSecret(password: string): Promise<User> {
+    const { user } = await call<{ user: User }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+    return user;
+  },
+  async detectAuthMode(): Promise<string> {
+    const res = await fetch("/api/auth/me", { credentials: "include" });
+    try {
+      const body = await res.json() as { mode?: unknown };
+      return typeof body?.mode === "string" ? body.mode : "trusted-lan";
+    } catch {
+      return "trusted-lan";
+    }
+  },
+  async getAuthMode(): Promise<{ mode: string; hasPassphrase: boolean }> {
+    return await call<{ mode: string; hasPassphrase: boolean }>("/api/auth/mode");
+  },
+  async setSharedSecret(passphrase: string): Promise<{ mode: string }> {
+    return await call<{ ok: true; mode: string }>("/api/auth/mode", {
+      method: "POST",
+      body: JSON.stringify({ passphrase }),
+    });
+  },
   async signup(email: string, password: string, displayName: string): Promise<User> {
     const { user } = await call<{ user: User }>("/api/auth/signup", {
       method: "POST",

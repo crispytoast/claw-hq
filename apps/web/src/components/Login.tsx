@@ -1,11 +1,73 @@
 import { useState } from "react";
 import { api, type User } from "../api.js";
 
+export type LoginMode = "shared-secret" | "real-auth";
+
 interface Props {
+  mode?: LoginMode;
   onAuthenticated(user: User): void | Promise<void>;
 }
 
-export function Login({ onAuthenticated }: Props) {
+export function Login({ mode = "real-auth", onAuthenticated }: Props) {
+  if (mode === "shared-secret") {
+    return <SharedSecretLogin onAuthenticated={onAuthenticated} />;
+  }
+  return <RealAuthLogin onAuthenticated={onAuthenticated} />;
+}
+
+function SharedSecretLogin({ onAuthenticated }: Props) {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setErr("");
+    try {
+      const user = await api.loginSharedSecret(password);
+      await onAuthenticated(user);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="auth-shell">
+      <form className="auth-card" onSubmit={submit}>
+        <h1>
+          <span className="brand-dot" />
+          Claw HQ
+        </h1>
+        <p className="sub">Enter the shared passphrase to sign in.</p>
+
+        <div className="field">
+          <label>Passphrase</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus
+            autoComplete="current-password"
+          />
+        </div>
+
+        <div className="err">{err || " "}</div>
+
+        <div className="row">
+          <span />
+          <button type="submit" className="btn-primary" disabled={busy || !password}>
+            {busy ? <span className="spinner" /> : "Sign in"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function RealAuthLogin({ onAuthenticated }: Props) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -76,7 +138,7 @@ export function Login({ onAuthenticated }: Props) {
           />
         </div>
 
-        <div className="err">{err || " "}</div>
+        <div className="err">{err || " "}</div>
 
         <div className="row">
           <button

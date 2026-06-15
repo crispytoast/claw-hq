@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type User } from "./api.js";
 import { systemApi } from "./system-api.js";
-import { Login } from "./components/Login.js";
+import { Login, type LoginMode } from "./components/Login.js";
 import { Setup } from "./components/Setup.js";
 import { ChatApp } from "./components/ChatApp.js";
 import { OpenClawInstallWizard } from "./components/OpenClawInstallWizard.js";
@@ -9,10 +9,14 @@ import { clearSudoGrants } from "./components/SudoGate.js";
 
 type State =
   | { kind: "loading" }
-  | { kind: "anon" }
+  | { kind: "anon"; mode: LoginMode }
   | { kind: "needs-setup"; user: User }
   | { kind: "needs-openclaw"; user: User }
   | { kind: "ready"; user: User };
+
+function normalizeLoginMode(mode: string): LoginMode {
+  return mode === "shared-secret" ? "shared-secret" : "real-auth";
+}
 
 // localStorage flag set when the user explicitly skips the install wizard;
 // honoring it keeps every page-load from re-prompting after they choose to
@@ -55,7 +59,8 @@ export function App() {
         if (tokens.length === 0) setState({ kind: "needs-setup", user });
         else setState({ kind: "ready", user });
       } catch {
-        setState({ kind: "anon" });
+        const mode = await api.detectAuthMode();
+        setState({ kind: "anon", mode: normalizeLoginMode(mode) });
       }
     })();
   }, []);
@@ -71,6 +76,7 @@ export function App() {
   if (state.kind === "anon") {
     return (
       <Login
+        mode={state.mode}
         onAuthenticated={async (user) => {
           if (await needsOpenclawWizard()) {
             setState({ kind: "needs-openclaw", user });
@@ -118,7 +124,8 @@ export function App() {
       onLogout={async () => {
         clearSudoGrants();
         await api.logout();
-        setState({ kind: "anon" });
+        const mode = await api.detectAuthMode();
+        setState({ kind: "anon", mode: normalizeLoginMode(mode) });
       }}
     />
   );

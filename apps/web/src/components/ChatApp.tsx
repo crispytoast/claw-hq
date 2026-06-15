@@ -302,33 +302,39 @@ export function ChatApp({ user, onLogout }: Props) {
 
   if (showSettings) {
     return (
-      <Settings
-        user={user}
-        onClose={() => setShowSettings(false)}
-        initialTab={settingsTab}
-        client={clientRef.current}
-        status={status}
-      />
+      <>
+        <Settings
+          user={user}
+          onClose={() => setShowSettings(false)}
+          initialTab={settingsTab}
+          client={clientRef.current}
+          status={status}
+        />
+        <SudoGate />
+      </>
     );
   }
 
   if (showInbox) {
     return (
-      <NotificationsInbox
-        onClose={() => {
-          setShowInbox(false);
-          // Refresh badge after the user dismisses (they may have marked stuff read).
-          void systemApi.notifications(1).then((l) => setUnreadCount(l.unread)).catch(() => {});
-        }}
-        onOpenDeepLink={(link) => {
-          // /chat/<sessionKey> deep links jump to that session.
-          const m = link.match(/^\/chat\/(.+)$/);
-          if (m) {
-            setActiveKey(m[1] ?? null);
+      <>
+        <NotificationsInbox
+          onClose={() => {
             setShowInbox(false);
-          }
-        }}
-      />
+            // Refresh badge after the user dismisses (they may have marked stuff read).
+            void systemApi.notifications(1).then((l) => setUnreadCount(l.unread)).catch(() => {});
+          }}
+          onOpenDeepLink={(link) => {
+            // /chat/<sessionKey> deep links jump to that session.
+            const m = link.match(/^\/chat\/(.+)$/);
+            if (m) {
+              setActiveKey(m[1] ?? null);
+              setShowInbox(false);
+            }
+          }}
+        />
+        <SudoGate />
+      </>
     );
   }
 

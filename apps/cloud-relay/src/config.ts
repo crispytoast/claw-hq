@@ -108,3 +108,15 @@ export function pathExists(path: string): boolean {
     return false;
   }
 }
+
+/**
+ * Re-read config from disk, apply a partial auth patch, write back. Used by the
+ * in-UI "Settings → Auth" flow so users can flip modes without editing JSON by hand.
+ * Returns the merged auth block so callers can mirror it into in-memory state.
+ */
+export function persistAuthChange(patch: ClawHqConfig["auth"]): ClawHqConfig["auth"] {
+  const cfg = readConfig();
+  cfg.auth = patch;
+  writeConfig(cfg);
+  return cfg.auth;
+}

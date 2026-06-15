@@ -8,6 +8,11 @@
  *                    Multiple browsers share the same "owner" identity.
  *   - real-auth:     email+password accounts in SQLite. Multi-user supported.
  *
+ * Mode can be flipped at runtime via POST /api/auth/mode so a user can switch
+ * from trusted-lan → shared-secret from the in-app Settings → Auth tab without
+ * editing config.json or restarting the relay. The login/signup routes are
+ * always-registered and branch on config.auth.mode at request time.
+ *
  * All modes return an `OwnerSession` (id + label). The id is opaque to the relay;
  * routing logic only cares about who-is-this.
  */
@@ -25,6 +30,7 @@ import {
   type UserRow,
 } from "./db.js";
 import type { ResolvedConfig } from "./config.js";
+import { persistAuthChange } from "./config.js";
 
 export interface OwnerSession {
   id: string;
@@ -33,6 +39,8 @@ export interface OwnerSession {
 
 const TRUSTED_LAN_OWNER: OwnerSession = { id: "owner", displayName: "Owner" };
 const SHARED_SECRET_OWNER: OwnerSession = { id: "owner", displayName: "Owner" };
+
+const MIN_PASSPHRASE_LEN = 12;
 
 function publicUser(u: UserRow): { id: string; email: string; displayName: string; createdAt: number } {
   return { id: u.id, email: u.email, displayName: u.display_name, createdAt: u.created_at };
@@ -99,9 +107,50 @@ export async function registerAuthRoutes(fastify: FastifyInstance, deps: AuthDep
     return { ok: true };
   });
 
-  // ---------------- mode-specific routes ----------------
-  if (config.auth.mode === "shared-secret") {
-    fastify.post<{ Body: { password?: string } }>("/api/auth/login", async (req, reply) => {
+  // ---------------- /api/auth/mode ----------------
+  // Read + write the current auth mode. Lets users flip trusted-lan → shared-secret
+  // (or rotate the passphrase) from the in-app Settings → Auth tab.
+  //
+  // - GET is open. Returns the current mode + whether a passphrase is set.
+  // - POST requires an authed owner (in trusted-lan that's automatic; post-flip
+  //   it requires the existing cookie). Body: {passphrase}.
+  fastify.get("/api/auth/mode", async () => {
+    return {
+      mode: config.auth.mode,
+      hasPassphrase: Boolean(config.auth.sharedSecretHash),
+    };
+  });
+
+  fastify.post<{ Body: { passphrase?: string } }>("/api/auth/mode", async (req, reply) => {
+    const owner = resolveOwner(req, config, db);
+    if (!owner) {
+      reply.code(401);
+      return { error: "not authenticated" };
+    }
+    const passphrase = typeof req.body?.passphrase === "string" ? req.body.passphrase : "";
+    if (passphrase.length < MIN_PASSPHRASE_LEN) {
+      reply.code(400);
+      return { error: `passphrase must be at least ${MIN_PASSPHRASE_LEN} characters` };
+    }
+    const hash = await bcrypt.hash(passphrase, 10);
+    const next = persistAuthChange({ mode: "shared-secret", sharedSecretHash: hash });
+    // Mutate the in-memory config so already-registered routes pick up the
+    // change on the next request without a process restart.
+    config.auth.mode = next.mode;
+    config.auth.sharedSecretHash = next.sharedSecretHash;
+    return { ok: true, mode: config.auth.mode };
+  });
+
+  // ---------------- /api/auth/login ----------------
+  // Always-registered; branches on the current auth mode at request time so a
+  // hot-flip via POST /api/auth/mode takes effect immediately.
+  fastify.post<{ Body: { password?: string; email?: string } }>("/api/auth/login", async (req, reply) => {
+    if (config.auth.mode === "trusted-lan") {
+      reply.code(400);
+      return { error: "login not applicable in trusted-lan mode" };
+    }
+
+    if (config.auth.mode === "shared-secret") {
       const password = typeof req.body?.password === "string" ? req.body.password : "";
       if (!password) {
         reply.code(400);
@@ -119,48 +168,51 @@ export async function registerAuthRoutes(fastify: FastifyInstance, deps: AuthDep
       }
       setSessionCookie(reply, "owner", config);
       return { user: { id: "owner", displayName: "Owner" }, mode: "shared-secret" };
-    });
-  }
+    }
 
-  if (config.auth.mode === "real-auth") {
-    fastify.post<{ Body: { email?: string; password?: string; displayName?: string } }>(
-      "/api/auth/signup",
-      async (req, reply) => {
-        const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
-        const password = typeof req.body?.password === "string" ? req.body.password : "";
-        const displayName = typeof req.body?.displayName === "string" ? req.body.displayName.trim() : "";
-        if (!email.includes("@") || password.length < 8 || displayName.length === 0) {
-          reply.code(400);
-          return { error: "email, password (≥8 chars), and displayName required" };
-        }
-        if (findUserByEmail(db, email)) {
-          reply.code(409);
-          return { error: "email already registered" };
-        }
-        const passwordHash = await bcrypt.hash(password, 10);
-        const user = createUser(db, { email, displayName, passwordHash });
-        setSessionCookie(reply, user.id, config);
-        return { user: publicUser(user) };
-      },
-    );
+    // real-auth
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    const user = findUserByEmail(db, email);
+    if (!user) {
+      reply.code(401);
+      return { error: "invalid credentials" };
+    }
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) {
+      reply.code(401);
+      return { error: "invalid credentials" };
+    }
+    setSessionCookie(reply, user.id, config);
+    return { user: publicUser(user) };
+  });
 
-    fastify.post<{ Body: { email?: string; password?: string } }>("/api/auth/login", async (req, reply) => {
+  // ---------------- /api/auth/signup ----------------
+  // Real-auth-only. Other modes return 400 so the SPA can tell users why.
+  fastify.post<{ Body: { email?: string; password?: string; displayName?: string } }>(
+    "/api/auth/signup",
+    async (req, reply) => {
+      if (config.auth.mode !== "real-auth") {
+        reply.code(400);
+        return { error: `signup not applicable in ${config.auth.mode} mode` };
+      }
       const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
       const password = typeof req.body?.password === "string" ? req.body.password : "";
-      const user = findUserByEmail(db, email);
-      if (!user) {
-        reply.code(401);
-        return { error: "invalid credentials" };
+      const displayName = typeof req.body?.displayName === "string" ? req.body.displayName.trim() : "";
+      if (!email.includes("@") || password.length < 8 || displayName.length === 0) {
+        reply.code(400);
+        return { error: "email, password (≥8 chars), and displayName required" };
       }
-      const ok = await bcrypt.compare(password, user.password_hash);
-      if (!ok) {
-        reply.code(401);
-        return { error: "invalid credentials" };
+      if (findUserByEmail(db, email)) {
+        reply.code(409);
+        return { error: "email already registered" };
       }
+      const passwordHash = await bcrypt.hash(password, 10);
+      const user = createUser(db, { email, displayName, passwordHash });
       setSessionCookie(reply, user.id, config);
       return { user: publicUser(user) };
-    });
-  }
+    },
+  );
 
   // ---------------- pairing tokens ----------------
   // Always available — used for split-process tunnel pairing.
