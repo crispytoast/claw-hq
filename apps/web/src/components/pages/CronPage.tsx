@@ -2,14 +2,22 @@ import { useCallback, useEffect, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 
+interface CronJobPayload {
+  kind?: "systemEvent" | "agentTurn" | string;
+  text?: string;
+  message?: string;
+}
+
 interface CronJob {
   id?: string;
   name?: string;
   title?: string;
-  schedule?: string;
+  schedule?: string | { kind?: string; expr?: string };
   cron?: string;
   agentId?: string;
   sessionKey?: string;
+  sessionTarget?: string;
+  session?: string;
   enabled?: boolean;
   nextRunMs?: number;
   lastRunMs?: number;
@@ -17,6 +25,23 @@ interface CronJob {
   /** Some installs return the prompt/message text under various keys. */
   message?: string;
   prompt?: string;
+  /** Modern OpenClaw shape — payload carries the kind + text. */
+  payload?: CronJobPayload;
+  /** Legacy installs may surface the kind flat. */
+  kind?: string;
+}
+
+type JobKind = "isolated-agent" | "main-systemEvent";
+
+function detectJobKind(j: CronJob): JobKind {
+  const k = j.payload?.kind ?? j.kind;
+  const target = j.sessionTarget ?? j.session;
+  if (k === "systemEvent" || target === "main") return "main-systemEvent";
+  return "isolated-agent";
+}
+
+function jobMessageText(j: CronJob): string {
+  return j.payload?.text ?? j.payload?.message ?? j.message ?? j.prompt ?? "";
 }
 
 interface CronListResponse {
@@ -69,11 +94,13 @@ function jobLabel(j: CronJob): string {
 }
 
 function jobSchedule(j: CronJob): string {
-  return j.schedule || j.cron || "(no schedule)";
+  if (typeof j.schedule === "string") return j.schedule;
+  if (j.schedule?.expr) return j.schedule.expr;
+  return j.cron || "(no schedule)";
 }
 
 function jobPreview(j: CronJob): string | null {
-  const text = j.message || j.prompt || j.description;
+  const text = jobMessageText(j) || j.description;
   if (!text) return null;
   const collapsed = text.replace(/\s+/g, " ").trim();
   return collapsed.length > 140 ? `${collapsed.slice(0, 137)}…` : collapsed;
@@ -91,6 +118,7 @@ interface EditDraft {
   cron: string;
   message: string;
   enabled: boolean;
+  kind: JobKind;
 }
 
 const EMPTY_DRAFT: EditDraft = {
@@ -99,11 +127,26 @@ const EMPTY_DRAFT: EditDraft = {
   cron: "",
   message: "",
   enabled: true,
+  kind: "isolated-agent",
 };
 
 function buildAddParams(d: EditDraft): Record<string, unknown> {
-  // We default to isolated sessions because they accept a plain message field.
-  // Main-session jobs need a systemEvent payload — left for a future toggle.
+  if (d.kind === "main-systemEvent") {
+    // Main-session systemEvent jobs need the structured schema —
+    // OpenClaw's legacy normalizer rejects flat `{session:"main", kind:"systemEvent"}`
+    // with "main cron jobs require payload.kind=\"systemEvent\"". Confirmed by
+    // the C36 wire probe.
+    return {
+      name: d.name,
+      enabled: d.enabled,
+      schedule: { kind: "cron", expr: d.cron },
+      sessionTarget: "main",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "systemEvent", text: d.message },
+    };
+  }
+  // Isolated agent-turn jobs accept the flat shape via the legacy normalizer
+  // (C21 confirmed). Keep it as-is so existing installs aren't disrupted.
   return {
     name: d.name,
     cron: d.cron,
@@ -116,17 +159,24 @@ function buildAddParams(d: EditDraft): Record<string, unknown> {
 
 function buildUpdateParams(d: EditDraft): Record<string, unknown> {
   if (!d.id) throw new Error("update requires id");
-  // The validator wants `{jobId, patch: {...}}` — not flat fields. Confirmed
-  // via the C21 wire probe.
-  return {
-    jobId: d.id,
-    patch: {
-      name: d.name,
-      cron: d.cron,
-      message: d.message,
-      enabled: d.enabled,
-    },
-  };
+  // `{jobId, patch: {...}}` — flat patch fields work for isolated agentTurn
+  // jobs (C21). systemEvent jobs need a structured payload patch so the text
+  // ends up on payload.text, not the legacy flat `message`.
+  const patch: Record<string, unknown> =
+    d.kind === "main-systemEvent"
+      ? {
+          name: d.name,
+          schedule: { kind: "cron", expr: d.cron },
+          enabled: d.enabled,
+          payload: { kind: "systemEvent", text: d.message },
+        }
+      : {
+          name: d.name,
+          cron: d.cron,
+          message: d.message,
+          enabled: d.enabled,
+        };
+  return { jobId: d.id, patch };
 }
 
 export function CronPage({ client, status }: Props) {
@@ -210,9 +260,10 @@ export function CronPage({ client, status }: Props) {
     setEditing({
       id,
       name: j.title || j.name || "",
-      cron: j.cron || j.schedule || "",
-      message: j.message || j.prompt || "",
+      cron: jobSchedule(j) === "(no schedule)" ? "" : jobSchedule(j),
+      message: jobMessageText(j),
       enabled: j.enabled !== false,
+      kind: detectJobKind(j),
     });
     setEditErr(null);
   }, []);
@@ -293,6 +344,21 @@ export function CronPage({ client, status }: Props) {
               />
             </label>
             <label>
+              <span>Job type</span>
+              <select
+                value={editing.kind}
+                onChange={(e) =>
+                  setEditing({ ...editing, kind: e.target.value as JobKind })
+                }
+                // Switching kind on an existing job would change the wire shape
+                // mid-life. Keep that out of v1.
+                disabled={saving || editing.id != null}
+              >
+                <option value="isolated-agent">Isolated session — agent prompt</option>
+                <option value="main-systemEvent">Main session — systemEvent text</option>
+              </select>
+            </label>
+            <label>
               <span>Cron expression</span>
               <input
                 type="text"
@@ -304,11 +370,17 @@ export function CronPage({ client, status }: Props) {
               />
             </label>
             <label>
-              <span>Message / prompt</span>
+              <span>
+                {editing.kind === "main-systemEvent" ? "Event text" : "Message / prompt"}
+              </span>
               <textarea
                 value={editing.message}
                 onChange={(e) => setEditing({ ...editing, message: e.target.value })}
-                placeholder="Summarize overnight updates."
+                placeholder={
+                  editing.kind === "main-systemEvent"
+                    ? "Heartbeat: check overnight diffs."
+                    : "Summarize overnight updates."
+                }
                 rows={3}
                 disabled={saving}
               />
@@ -323,12 +395,11 @@ export function CronPage({ client, status }: Props) {
               <span>Enabled</span>
             </label>
           </div>
-          {editing.id == null && (
-            <p className="cron-edit-note">
-              Runs in an isolated session. Main-session systemEvent injections aren't
-              wired yet — use the openclaw CLI for those.
-            </p>
-          )}
+          <p className="cron-edit-note">
+            {editing.kind === "main-systemEvent"
+              ? "Injects a systemEvent into your main agent session at the scheduled time. Use for heartbeat-style nudges that should appear inline in the running chat."
+              : "Runs in a fresh isolated session each tick — clean transcript, no main-session context."}
+          </p>
           {editErr && <div className="alert error">{editErr}</div>}
           <div className="cron-edit-actions">
             <button
@@ -383,6 +454,9 @@ export function CronPage({ client, status }: Props) {
                       </div>
                     </div>
                     <div className="page-row-meta">
+                      <span className="cl-row-tag">
+                        {detectJobKind(j) === "main-systemEvent" ? "main · event" : "isolated"}
+                      </span>
                       {j.enabled === false && <span className="status-pill bad"><span className="status-dot" />disabled</span>}
                       {j.enabled !== false && <span className="status-pill ok"><span className="status-dot" />enabled</span>}
                       {j.nextRunMs && <span>next {relativeTime(j.nextRunMs)}</span>}
