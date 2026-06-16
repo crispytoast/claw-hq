@@ -24,9 +24,10 @@ import {
   pluginsSearch,
   pluginsUninstall,
 } from "./plugins.js";
+import { getDoc, listDocs, searchDocs } from "./docs.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.13";
+const PLUGIN_VERSION = "0.0.14";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -410,6 +411,9 @@ export default definePluginEntry({
             "clawhq.plugins.search",
             "clawhq.plugins.install",
             "clawhq.plugins.uninstall",
+            "clawhq.docs.list",
+            "clawhq.docs.get",
+            "clawhq.docs.search",
           ],
         });
       },
@@ -1130,6 +1134,97 @@ export default definePluginEntry({
         }
       },
       { scope: "operator.write" },
+    );
+
+    // --- docs: workspace-wide markdown browser + search ---
+
+    api.registerGatewayMethod(
+      "clawhq.docs.list",
+      async ({ respond }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const docs = await listDocs({ workspaceRoot });
+          respond(true, { docs, workspaceRoot });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.docs.get",
+      async ({ respond, params }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const p = (params ?? {}) as { relativePath?: unknown };
+          if (typeof p.relativePath !== "string" || !p.relativePath) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: relativePath",
+            });
+            return;
+          }
+          const doc = await getDoc({
+            workspaceRoot,
+            relativePath: p.relativePath,
+          });
+          if (!doc) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no doc: ${p.relativePath}`,
+            });
+            return;
+          }
+          respond(true, { doc });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.docs.search",
+      async ({ respond, params }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const p = (params ?? {}) as { query?: unknown };
+          const query = typeof p.query === "string" ? p.query : "";
+          const result = await searchDocs({ workspaceRoot, query });
+          respond(true, result);
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
     );
 
     // --- plugin management bridge: shells out to `openclaw plugins ...` ---

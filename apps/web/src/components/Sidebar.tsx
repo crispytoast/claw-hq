@@ -17,6 +17,10 @@ export type SidebarPage =
   | "config"
   | "doctor"
   | "rpc"
+  | "docs"
+  | "memory"
+  | "tasks"
+  | "home"
   | "settings";
 
 interface NavItem {
@@ -29,7 +33,11 @@ interface NavItem {
 // Order mirrors OHQ's static nav: live surfaces first, ops/debug last,
 // Settings always at the bottom. "Sessions" lives in the expandable group above.
 const STATIC_NAV: NavItem[] = [
+  { id: "home",        label: "Home",        icon: "🏠" },
   { id: "subprojects", label: "Subprojects", icon: "🌿" },
+  { id: "tasks",       label: "Tasks",       icon: "✅" },
+  { id: "docs",        label: "Docs",        icon: "📚" },
+  { id: "memory",      label: "Memory",      icon: "📅" },
   { id: "channels",    label: "Channels",    icon: "📡" },
   { id: "mcps",        label: "MCPs",        icon: "🛠️" },
   { id: "skills",      label: "Skills",      icon: "🧠" },
