@@ -184,16 +184,16 @@ ok(
   "BubbleContent renders <ul>/<ol> via dynamic Tag",
 );
 
-// CRITICAL — brand accent must stay cyan, NOT swap to OHQ's amber. Project
-// memory locks cyan + magenta + maroon (#B83C5C). If anyone shifts the
-// accent token to amber #d4a24c this assertion fails loudly.
+// Brand accent is OHQ amber per Frank's 2026-06-15 PM call. Previous cyan
+// lock was my own memory-side framing, not a standing rule. Guards still
+// here so a stray edit can't silently shift back to cyan.
 ok(
-  /--accent:\s*#00d9d9/.test(css),
-  "--accent stays CYAN (#00d9d9) — brand identity locked, NOT OHQ amber",
+  /--accent:\s*#d4a24c/.test(css),
+  "--accent is AMBER (#d4a24c) — Frank's chosen Claw HQ brand color",
 );
 ok(
-  /--accent-rgb:\s*0,\s*217,\s*217/.test(css),
-  "--accent-rgb stays cyan triple",
+  /--accent-rgb:\s*212,\s*162,\s*76/.test(css),
+  "--accent-rgb matches amber triple",
 );
 
 console.log(`\nphaseC45: ${assertions - failures}/${assertions} assertions passed`);
