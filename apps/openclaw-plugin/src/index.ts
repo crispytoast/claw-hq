@@ -11,7 +11,7 @@ import {
   searchChats,
   type ChatRole,
 } from "./chats.js";
-import { toggleTask } from "./tasks.js";
+import { listAllTasks, toggleTask } from "./tasks.js";
 import {
   deleteMemoryFile,
   getLongTermMemory,
@@ -28,7 +28,7 @@ import {
 import { getDoc, listDocs, searchDocs } from "./docs.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.15";
+const PLUGIN_VERSION = "0.0.16";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -404,6 +404,7 @@ export default definePluginEntry({
             "clawhq.chats.delete",
             "clawhq.chats.search",
             "clawhq.tasks.toggle",
+            "clawhq.tasks.listAll",
             "clawhq.memory.list",
             "clawhq.memory.get",
             "clawhq.memory.put",
@@ -784,6 +785,29 @@ export default definePluginEntry({
         }
       },
       { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.tasks.listAll",
+      async ({ respond }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const result = await listAllTasks({ workspaceRoot });
+          respond(true, result);
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
     );
 
     api.registerGatewayMethod(

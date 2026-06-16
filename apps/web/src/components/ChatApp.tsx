@@ -24,6 +24,7 @@ import { NodesPage } from "./pages/NodesPage.js";
 import { ConfigEditorPage } from "./pages/ConfigEditorPage.js";
 import { DocsPage } from "./pages/DocsPage.js";
 import { WorkspaceMemoryPage } from "./pages/WorkspaceMemoryPage.js";
+import { TasksPage } from "./pages/TasksPage.js";
 import { SudoGate } from "./SudoGate.js";
 
 type PageKey = SidebarPage;
@@ -495,6 +496,7 @@ export function ChatApp({ user, onLogout }: Props) {
         {page === "config" && <ConfigEditorPage client={clientRef.current} status={status} />}
         {page === "docs" && <DocsPage client={clientRef.current} status={status} />}
         {page === "memory" && <WorkspaceMemoryPage client={clientRef.current} status={status} />}
+        {page === "tasks" && <TasksPage client={clientRef.current} status={status} />}
         {page === "doctor" && <DoctorPage client={clientRef.current} status={status} />}
         {page === "rpc" && <RpcConsolePage client={clientRef.current} status={status} />}
       </main>

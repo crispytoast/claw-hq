@@ -73,6 +73,158 @@ export interface ToggleResult extends TasksSummary {
   checked: boolean;
 }
 
+// ── Aggregated rollup (Phase C step 40) ─────────────────────────────────────
+
+export interface TaskLine {
+  projectSlug: string;
+  /** Human name from the project's BRIEF.md or fallback to slug. */
+  projectName: string;
+  subprojectSlug: string | null;
+  /** Human name from the subproject's BRIEF.md or fallback to slug. */
+  subprojectName: string | null;
+  /** 0-indexed position of this checkbox within the source TASKS.md
+   *  (matches the index toggleTask expects). */
+  lineIndex: number;
+  text: string;
+  checked: boolean;
+}
+
+export interface RollupResult {
+  tasks: TaskLine[];
+  /** Number of projects scanned, regardless of whether they had tasks. */
+  projectsScanned: number;
+  /** Number of TASKS.md files actually read. */
+  filesRead: number;
+}
+
+const SKIP_DIRS = new Set([
+  "secrets",
+  "node_modules",
+  ".git",
+  ".openclaw",
+  ".oswald-hq",
+]);
+
+async function readFileSafe(p: string): Promise<string | null> {
+  try {
+    return await fs.readFile(p, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function nameFromBrief(brief: string | null, fallback: string): string {
+  if (!brief) return fallback;
+  // Workspace convention (per OHQ's listSubprojects): frontmatter `name:`
+  // wins over the H1 — subprojects use frontmatter as canonical metadata
+  // and the H1 is often a generic header.
+  let body = brief;
+  let frontmatterName: string | null = null;
+  if (body.startsWith("---")) {
+    const end = body.indexOf("\n---", 3);
+    if (end !== -1) {
+      const block = body.slice(3, end);
+      const fm = block.match(/(?:^|\n)name:\s*([^\n]+)/);
+      if (fm) frontmatterName = fm[1]!.trim().replace(/^["']|["']$/g, "");
+      body = body.slice(end + 4).replace(/^\n/, "");
+    }
+  }
+  if (frontmatterName) return frontmatterName;
+  const h1 = body.match(/^#\s+(.+)/m);
+  if (h1) return h1[1]!.trim();
+  return fallback;
+}
+
+function collectTaskLines(
+  content: string,
+  projectSlug: string,
+  projectName: string,
+  subprojectSlug: string | null,
+  subprojectName: string | null,
+): TaskLine[] {
+  const out: TaskLine[] = [];
+  let cbIdx = 0;
+  for (const line of content.split("\n")) {
+    const m = CHECKBOX_LINE_REGEX.exec(line);
+    if (!m) continue;
+    const state = m[2];
+    const checked = state === "x" || state === "X";
+    // m[3] is `]<space>...rest`. Strip the leading `] ` so text is just the task body.
+    const post = m[3] ?? "";
+    const text = post.replace(/^\]\s/, "").trim();
+    if (text.length === 0) {
+      cbIdx++;
+      continue;
+    }
+    out.push({
+      projectSlug,
+      projectName,
+      subprojectSlug,
+      subprojectName,
+      lineIndex: cbIdx,
+      text,
+      checked,
+    });
+    cbIdx++;
+  }
+  return out;
+}
+
+export async function listAllTasks(input: {
+  workspaceRoot: string;
+}): Promise<RollupResult> {
+  const projectsDir = path.resolve(path.join(input.workspaceRoot, "projects"));
+  let projectEntries;
+  try {
+    projectEntries = await fs.readdir(projectsDir, { withFileTypes: true });
+  } catch {
+    return { tasks: [], projectsScanned: 0, filesRead: 0 };
+  }
+  const out: TaskLine[] = [];
+  let projectsScanned = 0;
+  let filesRead = 0;
+  for (const e of projectEntries) {
+    if (!e.isDirectory()) continue;
+    if (SKIP_DIRS.has(e.name)) continue;
+    if (!VALID_SLUG.test(e.name)) continue;
+    projectsScanned++;
+    const projectSlug = e.name;
+    const projectDir = path.join(projectsDir, projectSlug);
+    const projectBrief = await readFileSafe(path.join(projectDir, "BRIEF.md"));
+    const projectName = nameFromBrief(projectBrief, projectSlug);
+
+    // Project-level TASKS.md (some projects have it, some don't).
+    const projectTasksPath = path.join(projectDir, "TASKS.md");
+    const projectTasks = await readFileSafe(projectTasksPath);
+    if (projectTasks) {
+      filesRead++;
+      out.push(...collectTaskLines(projectTasks, projectSlug, projectName, null, null));
+    }
+
+    // Sub-project TASKS.md files.
+    const subsDir = path.join(projectDir, "subprojects");
+    let subEntries;
+    try {
+      subEntries = await fs.readdir(subsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const se of subEntries) {
+      if (!se.isDirectory() || SKIP_DIRS.has(se.name)) continue;
+      if (!VALID_SLUG.test(se.name)) continue;
+      const subSlug = se.name;
+      const subDir = path.join(subsDir, subSlug);
+      const subBrief = await readFileSafe(path.join(subDir, "BRIEF.md"));
+      const subName = nameFromBrief(subBrief, subSlug);
+      const subTasks = await readFileSafe(path.join(subDir, "TASKS.md"));
+      if (!subTasks) continue;
+      filesRead++;
+      out.push(...collectTaskLines(subTasks, projectSlug, projectName, subSlug, subName));
+    }
+  }
+  return { tasks: out, projectsScanned, filesRead };
+}
+
 export async function toggleTask(input: {
   workspaceRoot: string;
   projectSlug: string;

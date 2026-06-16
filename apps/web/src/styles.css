@@ -2676,3 +2676,117 @@ a:hover { text-decoration: underline; }
   .cl-memory-wrap { grid-template-columns: 1fr; }
   .cl-memory-side { display: none; }
 }
+
+/* ── Tasks rollup page (Phase C step 40) ──────────────────────────────────── */
+.cl-tasks-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 24px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.cl-tasks-filter {
+  display: flex;
+  gap: 6px;
+}
+.cl-tasks-tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.cl-tasks-tab:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.cl-tasks-tab.is-active {
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.cl-tasks-search-input {
+  flex: 1;
+  min-width: 160px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: 0.9rem;
+  outline: none;
+}
+.cl-tasks-search-input:focus { border-color: var(--accent); }
+.cl-tasks-error {
+  margin: 12px 24px 0;
+  padding: 8px 12px;
+  background: rgba(224, 122, 122, 0.08);
+  border: 1px solid rgba(224, 122, 122, 0.4);
+  color: #e07a7a;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.cl-tasks-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 24px;
+}
+.cl-tasks-empty {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 40px 16px;
+  font-size: 0.95rem;
+}
+.cl-tasks-project {
+  margin-bottom: 20px;
+}
+.cl-tasks-project-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.cl-tasks-file {
+  margin-left: 4px;
+  margin-bottom: 12px;
+}
+.cl-tasks-file-label {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 6px 0 4px;
+}
+.cl-tasks-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 0 4px 4px;
+  font-size: 0.88rem;
+  color: var(--text);
+  cursor: pointer;
+  line-height: 1.4;
+}
+.cl-tasks-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.cl-tasks-row input[type="checkbox"] {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.cl-tasks-row.is-checked .cl-tasks-row-text {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+.cl-tasks-row-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
