@@ -1207,6 +1207,16 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     if (e.dataTransfer?.files?.length) void addFiles(e.dataTransfer.files);
   };
 
+  // Thinking indicator: between Send and the first response activity (text
+  // delta, tool start, approval, or question), show the three-dot pulse. Once
+  // anything has been appended after the last user message, the agent is
+  // visibly responding and the dots would be redundant.
+  const showThinking = (() => {
+    if (!pending || items.length === 0) return false;
+    const last = items[items.length - 1];
+    return last !== undefined && last.kind === "message" && last.message.role === "user";
+  })();
+
   return (
     <>
       <div
@@ -1261,10 +1271,15 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             >
               {m.role === "system" && <span className="role-tag">system</span>}
               <BubbleContent text={m.text} highlight={initialSearchQuery} />
-              {m.streaming && <span className="spinner" style={{ marginLeft: "0.5rem" }} />}
+              {m.streaming && <span className="streaming-caret" aria-hidden="true" />}
             </div>
           );
         })}
+        {showThinking && (
+          <div className="thinking-indicator" role="status" aria-label="agent thinking">
+            <span /><span /><span />
+          </div>
+        )}
         {err && <div className="bubble system">{err}</div>}
         {dragOver && (
           <div className="drop-overlay">Drop to attach</div>
