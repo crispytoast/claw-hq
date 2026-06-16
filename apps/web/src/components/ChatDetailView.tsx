@@ -5,7 +5,7 @@ import { lineDiff, parseFileEditArgs, statsFor, toHunks } from "./diff.js";
 import type { DiffHunk, ParsedFileEdit } from "./diff.js";
 import { extractHistoryAttachments, type HistoryAttachment } from "./history-attachments.js";
 import {
-  Plus, Mic, Clipboard, Image, X, Chevron, Hourglass, Chat, ArrowUp, Kebab,
+  Plus, Mic, Clipboard, Image, X, Chevron, Hourglass, Chat, ArrowUp,
   Tools, Pencil, Hand, Clip,
 } from "./icons.js";
 
@@ -406,8 +406,6 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   const [availableModels, setAvailableModels] = useState<ModelEntry[] | null>(null);
   const [modelMenuErr, setModelMenuErr] = useState<string | null>(null);
   const [modelPatching, setModelPatching] = useState(false);
-  /** Inline kebab tray for the optional composer buttons (mic + history). */
-  const [extrasOpen, setExtrasOpen] = useState(false);
 
   // Phone-width detection drives the swipe-to-terminal pattern: on mobile the
   // chat surface becomes a horizontal snap container, tool blocks shift out of
@@ -1641,26 +1639,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
               disabled={status.kind !== "ready" || pending}
               onClick={() => fileInputRef.current?.click()}
             ><Plus size={14} /></button>
-            {(voiceAvailable || historyAttachments.length > 0) && (
-              <button
-                type="button"
-                className={`composer-extras-toggle ${extrasOpen ? "active" : ""}`}
-                aria-label={extrasOpen ? "Hide extras" : "More options"}
-                title="More options"
-                onClick={() => setExtrasOpen((v) => !v)}
-              ><Kebab size={14} /></button>
-            )}
-            {extrasOpen && voiceAvailable && (
-              <button
-                type="button"
-                className={`composer-mic ${listening ? "listening" : ""}`}
-                aria-label={listening ? "Stop voice input" : "Start voice input"}
-                title={listening ? "Stop voice input" : "Voice input"}
-                disabled={status.kind !== "ready" || pending}
-                onClick={toggleVoice}
-              ><Mic size={14} /></button>
-            )}
-            {extrasOpen && historyAttachments.length > 0 && (
+            {historyAttachments.length > 0 && (
               <button
                 type="button"
                 className={`composer-attach composer-history-trigger ${showHistoryPicker ? "active" : ""}`}
@@ -1737,6 +1716,16 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
               )}
             </div>
             <div className="composer-actions-spacer" />
+            {voiceAvailable && (
+              <button
+                type="button"
+                className={`composer-mic ${listening ? "listening" : ""}`}
+                aria-label={listening ? "Stop voice input" : "Start voice input"}
+                title={listening ? "Stop voice input" : "Voice input"}
+                disabled={status.kind !== "ready" || pending}
+                onClick={toggleVoice}
+              ><Mic size={14} /></button>
+            )}
             <button
               type="button"
               className="send"
