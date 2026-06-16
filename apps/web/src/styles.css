@@ -408,7 +408,6 @@ a:hover { text-decoration: underline; }
   color: var(--foreground);
   max-width: 42rem;
   margin-left: auto;
-  border-bottom-right-radius: 6px;
 }
 .bubble.system {
   background: transparent;
@@ -678,8 +677,8 @@ a:hover { text-decoration: underline; }
   flex-wrap: wrap;
 }
 .chat-subheader-title {
-  font-weight: 500;
-  color: var(--foreground);
+  font-weight: 400;
+  color: var(--muted-foreground);
   max-width: 22rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -786,6 +785,64 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: 0.4rem;
 }
+
+/* Composer extras kebab — hides mic + history behind one tap so the default
+   action row reads as OHQ-minimal: [+] [Model] ... [↑]. */
+.composer-extras-toggle {
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 50%;
+  border: 1px solid var(--sidebar-border);
+  color: var(--muted-foreground);
+  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.composer-extras-toggle:hover:not(:disabled),
+.composer-extras-toggle.active {
+  background: rgba(var(--accent-rgb), 0.08);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--foreground);
+}
+
+/* OHQ-compact bell + status dot. The 9+ pill was visually loud. */
+.bell-btn-compact {
+  position: relative;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
+  font-size: 1.05rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 120ms ease, background 120ms ease;
+}
+.bell-btn-compact:hover { color: var(--foreground); background: rgba(255,255,255,0.04); }
+.bell-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.status-dot-only {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot-only.ok { background: #4aa064; }
+.status-dot-only.warn { background: var(--accent); }
+.status-dot-only.bad { background: #dc5a5a; box-shadow: 0 0 6px rgba(220, 90, 90, 0.5); }
 
 .empty {
   text-align: center;

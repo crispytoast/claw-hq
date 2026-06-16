@@ -346,23 +346,26 @@ export function ChatApp({ user, onLogout }: Props) {
     );
   }
 
+  // Compact OHQ-style toolbar — bell shrinks to an icon-only button with a
+  // small dot when there are unread notifications; the loud "● online" pill
+  // becomes a tiny status dot beside the bell. The page-toolbar title row
+  // still carries the chat name, so removing the pill text doesn't hide info.
   const toolbar = (
     <>
       <button
-        className="bell-btn"
-        aria-label="notifications"
+        className="bell-btn-compact"
+        aria-label={unreadCount > 0 ? `${unreadCount} notifications` : "Notifications"}
         onClick={() => setShowInbox(true)}
         title={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"}
       >
         🔔
-        {unreadCount > 0 && (
-          <span className="bell-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>
-        )}
+        {unreadCount > 0 && <span className="bell-dot" aria-hidden="true" />}
       </button>
-      <span className={`status-pill ${pill.cls}`}>
-        <span className="status-dot" />
-        {pill.label}
-      </span>
+      <span
+        className={`status-dot-only ${pill.cls}`}
+        title={pill.label}
+        aria-label={pill.label}
+      />
     </>
   );
 

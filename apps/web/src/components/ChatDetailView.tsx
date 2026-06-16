@@ -399,6 +399,8 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   const [availableModels, setAvailableModels] = useState<ModelEntry[] | null>(null);
   const [modelMenuErr, setModelMenuErr] = useState<string | null>(null);
   const [modelPatching, setModelPatching] = useState(false);
+  /** Inline kebab tray for the optional composer buttons (mic + history). */
+  const [extrasOpen, setExtrasOpen] = useState(false);
 
   // Voice STT — driven by window.ClawHqVoiceBridge (Android-only). voiceAnchor
   // is the start offset in `input` where the live partial begins; everything
@@ -1616,7 +1618,16 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
               disabled={status.kind !== "ready" || pending}
               onClick={() => fileInputRef.current?.click()}
             >＋</button>
-            {voiceAvailable && (
+            {(voiceAvailable || historyAttachments.length > 0) && (
+              <button
+                type="button"
+                className={`composer-extras-toggle ${extrasOpen ? "active" : ""}`}
+                aria-label={extrasOpen ? "Hide extras" : "More options"}
+                title="More options"
+                onClick={() => setExtrasOpen((v) => !v)}
+              >⋯</button>
+            )}
+            {extrasOpen && voiceAvailable && (
               <button
                 type="button"
                 className={`composer-mic ${listening ? "listening" : ""}`}
@@ -1626,7 +1637,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
                 onClick={toggleVoice}
               >🎤</button>
             )}
-            {historyAttachments.length > 0 && (
+            {extrasOpen && historyAttachments.length > 0 && (
               <button
                 type="button"
                 className={`composer-attach composer-history-trigger ${showHistoryPicker ? "active" : ""}`}
