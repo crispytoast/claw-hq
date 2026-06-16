@@ -514,6 +514,134 @@ a:hover { text-decoration: underline; }
   .thinking-indicator span { animation: none; opacity: 0.8; }
 }
 
+/* Chat-tier polish — Phase C step 43. Inline markdown rendering. */
+.bubble-inline-code {
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 0.88em;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--sidebar-border);
+  padding: 0.04em 0.38em;
+  border-radius: 5px;
+  color: var(--foreground);
+  word-break: break-word;
+}
+.bubble.user .bubble-inline-code {
+  background: rgba(0, 0, 0, 0.25);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.bubble-codeblock {
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 0.84em;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--sidebar-border);
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0.6rem 0;
+  line-height: 1.45;
+}
+.bubble-codeblock code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+}
+
+/* Centered system rows + HUD row with optional ctx bar. */
+.chat-system-row {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  opacity: 0.85;
+  padding: 0.25rem 0.75rem;
+  max-width: 42rem;
+  align-self: center;
+  animation: chat-item-in 180ms ease-out;
+}
+.chat-hud-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.74rem;
+  color: var(--muted-foreground);
+  opacity: 0.75;
+  padding: 0.3rem 0.75rem;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  align-self: center;
+  animation: chat-item-in 180ms ease-out;
+}
+.chat-hud-text { letter-spacing: 0.02em; }
+.chat-hud-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.chat-hud-bar {
+  position: relative;
+  display: inline-block;
+  width: 56px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.chat-hud-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+/* Chat sub-header: project chip + model selector under the page-toolbar title. */
+.chat-subheader {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem max(1rem, calc((100% - 56rem) / 2)) 0.45rem;
+  border-bottom: 1px solid var(--sidebar-border);
+  background: var(--bg);
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  flex-wrap: wrap;
+}
+.chat-subheader-title {
+  font-weight: 500;
+  color: var(--foreground);
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-subheader-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.06);
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+}
+.chat-subheader-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--sidebar-border);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.1rem 0.55rem 0.1rem 0.65rem;
+  border-radius: 999px;
+  margin-left: auto;
+  cursor: default;
+}
+.chat-subheader-model-caret { opacity: 0.65; font-size: 0.8em; }
+
 .empty {
   text-align: center;
   color: var(--text-dim);

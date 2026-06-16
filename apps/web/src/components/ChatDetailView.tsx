@@ -240,6 +240,77 @@ function sessionKeyFor(chatId: string): string {
   return `agent:main:clawhq-${chatId.slice(0, 8)}`;
 }
 
+// Parse a HUD-shaped system row (matches OHQ's `done · 6→748 tok · $0.0986 · ctx 72.0%`).
+// Returns null for non-HUD system rows (errors, approval markers, etc) so they fall
+// through to the plain centered render.
+function parseHud(text: string): { body: string; ctxPct: number | null } | null {
+  const t = text.trim();
+  if (!/^(?:[—-]\s*)?(done|error|stopped)\b/i.test(t)) return null;
+  const ctxMatch = t.match(/\bctx\s+(\d+(?:\.\d+)?)\s*%/i);
+  const ctxPct = ctxMatch ? Number(ctxMatch[1]) : null;
+  // Strip ctx tail from the body so it doesn't double-render.
+  let body = t.replace(/\s*·?\s*ctx\s+\d+(?:\.\d+)?\s*%\s*$/i, "").trim();
+  body = body.replace(/^[—-]\s*/, "").replace(/\s*—\s*$/, "").trim();
+  return { body, ctxPct };
+}
+
+// Defensive extraction of usage + cost from the chat event final payload.
+// OpenClaw's wrapper shape isn't typed in protocol-types; try the common
+// places (Anthropic SDK shape via message.usage, OHQ's top-level total_cost_usd,
+// camelCase variants the gateway might surface).
+interface PickedUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+}
+function pickUsage(p: Record<string, unknown>, m: Record<string, unknown> | null): PickedUsage | null {
+  const candidates: unknown[] = [
+    p.usage, p.finalUsage,
+    m?.usage,
+    (p.result as Record<string, unknown> | undefined)?.usage,
+  ];
+  for (const c of candidates) {
+    if (!c || typeof c !== "object") continue;
+    const o = c as Record<string, unknown>;
+    const num = (k: string) => (typeof o[k] === "number" ? (o[k] as number) : undefined);
+    const got: PickedUsage = {
+      inputTokens: num("inputTokens") ?? num("input_tokens"),
+      outputTokens: num("outputTokens") ?? num("output_tokens"),
+      cacheReadTokens: num("cacheReadInputTokens") ?? num("cache_read_input_tokens"),
+      cacheCreationTokens: num("cacheCreationInputTokens") ?? num("cache_creation_input_tokens"),
+    };
+    if (got.inputTokens !== undefined || got.outputTokens !== undefined) return got;
+  }
+  return null;
+}
+function pickCostUsd(p: Record<string, unknown>): number | null {
+  const candidates: unknown[] = [
+    p.totalCostUsd, p.total_cost_usd, p.costUsd, p.cost,
+    (p.result as Record<string, unknown> | undefined)?.totalCostUsd,
+    (p.result as Record<string, unknown> | undefined)?.total_cost_usd,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "number" && c >= 0) return c;
+  }
+  return null;
+}
+const CONTEXT_LIMIT = 200_000;
+function formatTurnHud(p: Record<string, unknown>, m: Record<string, unknown> | null): { text: string; ctxPct: number | null } | null {
+  const usage = pickUsage(p, m);
+  const cost = pickCostUsd(p);
+  if (!usage && cost === null) return null;
+  const tokens = usage
+    ? ` · ${usage.inputTokens ?? 0}→${usage.outputTokens ?? 0} tok`
+    : "";
+  const costStr = cost !== null ? ` · $${cost.toFixed(4)}` : "";
+  const ctxNumer = usage
+    ? (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0)
+    : 0;
+  const ctxPct = ctxNumer > 0 ? Math.min(999, (ctxNumer / CONTEXT_LIMIT) * 100) : null;
+  return { text: `done${tokens}${costStr}`, ctxPct };
+}
+
 // Cap the memory blob so we don't blow OpenClaw's prompt window on huge briefs.
 const MEMORY_CHAR_BUDGET = 8000;
 
@@ -682,6 +753,21 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             .catch((e) => {
               console.warn("clawhq.chats.append (assistant) failed:", e);
             });
+        }
+        // Emit a HUD row for this turn if the event carries usage/cost. Stays
+        // out of persistence — the HUD is per-turn state, not a chat message.
+        const hud = formatTurnHud(p, messageObj);
+        if (hud) {
+          const hudText = hud.ctxPct !== null
+            ? `${hud.text} · ctx ${hud.ctxPct.toFixed(1)}%`
+            : hud.text;
+          setItems((prev) => [
+            ...prev,
+            {
+              kind: "message" as const,
+              message: { id: newId(), role: "system", text: hudText },
+            },
+          ]);
         }
         if (runId) {
           setTimeout(() => streamMapRef.current.delete(runId), 1000);
@@ -1219,6 +1305,17 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
 
   return (
     <>
+      <div className="chat-subheader">
+        {chatTitle && <span className="chat-subheader-title" title={chatTitle}>{chatTitle}</span>}
+        {projectSlug && (
+          <span className="chat-subheader-chip" title={`Project context: ${projectSlug}`}>
+            {projectSlug}
+          </span>
+        )}
+        <span className="chat-subheader-model" title="Per-chat model override coming soon — set defaults from Models page">
+          Default<span className="chat-subheader-model-caret" aria-hidden="true">⌄</span>
+        </span>
+      </div>
       <div
         className={`message-list ${dragOver ? "drag-over" : ""}`}
         ref={listRef}
@@ -1263,13 +1360,22 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             );
           }
           const m = it.message;
+          if (m.role === "system") {
+            return (
+              <SystemRow
+                key={itemKey(it)}
+                id={m.id}
+                text={m.text}
+                highlight={initialSearchQuery}
+              />
+            );
+          }
           return (
             <div
               key={itemKey(it)}
               data-message-id={m.id}
               className={`bubble ${m.role}`}
             >
-              {m.role === "system" && <span className="role-tag">system</span>}
               <BubbleContent text={m.text} highlight={initialSearchQuery} />
               {m.streaming && <span className="streaming-caret" aria-hidden="true" />}
             </div>
@@ -1789,54 +1895,163 @@ function isInlineImageUrl(url: string): boolean {
   return IMAGE_EXT_RE.test(url);
 }
 
+function SystemRow({ id, text, highlight }: { id: string; text: string; highlight?: string }) {
+  const hud = parseHud(text);
+  if (!hud) {
+    // Non-HUD system rows (errors, approval markers, free-form notes) — centered,
+    // muted, no SYSTEM tag.
+    return (
+      <div data-message-id={id} className="chat-system-row">
+        <BubbleContent text={text} highlight={highlight} />
+      </div>
+    );
+  }
+  const pct = hud.ctxPct;
+  // OHQ palette: green under 70%, accent up to 90%, red above. Matches the
+  // ChatView.tsx reference at src/app/chat/[id]/ChatView.tsx:1304.
+  const fillColor =
+    pct === null ? "transparent"
+    : pct > 90 ? "var(--maroon, #B83C5C)"
+    : pct > 70 ? "var(--accent)"
+    : "#4aa064";
+  return (
+    <div data-message-id={id} className="chat-hud-row">
+      <span className="chat-hud-text">— {hud.body} —</span>
+      {pct !== null && (
+        <span className="chat-hud-ctx" title={`Context: ${pct.toFixed(1)}% of model window`}>
+          <span className="chat-hud-bar" aria-hidden="true">
+            <span
+              className="chat-hud-bar-fill"
+              style={{ width: `${Math.min(100, pct)}%`, backgroundColor: fillColor }}
+            />
+          </span>
+          <span>ctx {pct.toFixed(0)}%</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
+type InlinePart =
+  | { kind: "text"; text: string }
+  | { kind: "code"; text: string }
+  | { kind: "bold"; text: string }
+  | { kind: "italic"; text: string }
+  | { kind: "link"; text: string; url: string };
+
+type BlockPart =
+  | { kind: "inline"; parts: InlinePart[] }
+  | { kind: "codeblock"; lang: string; text: string };
+
+// Tokenize a single line/segment into inline parts (text + code + bold + italic
+// + links). Markers are non-greedy, single-line (newlines break out of bold /
+// italic / code spans). Order matters — links first so `[foo](http://...)`
+// doesn't get half-eaten by italic matching the asterisk in a URL.
+function parseInline(text: string): InlinePart[] {
+  const re =
+    /\[([^\]]+)\]\(([^)]+)\)|`([^`\n]+)`|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
+  const out: InlinePart[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push({ kind: "text", text: text.slice(last, m.index) });
+    if (m[1] !== undefined && m[2] !== undefined) {
+      out.push({ kind: "link", text: m[1], url: m[2] });
+    } else if (m[3] !== undefined) {
+      out.push({ kind: "code", text: m[3] });
+    } else if (m[4] !== undefined) {
+      out.push({ kind: "bold", text: m[4] });
+    } else if (m[5] !== undefined) {
+      out.push({ kind: "bold", text: m[5] });
+    } else if (m[6] !== undefined) {
+      out.push({ kind: "italic", text: m[6] });
+    } else if (m[7] !== undefined) {
+      out.push({ kind: "italic", text: m[7] });
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
+  return out;
+}
+
+// Split text into fenced code blocks vs inline-parsed segments. Fences are
+// matched non-greedy with ```[lang]\n...\n```. Anything outside fences flows
+// through parseInline; everything inside the fence renders as a <pre><code>.
+function parseBlocks(text: string): BlockPart[] {
+  const out: BlockPart[] = [];
+  const re = /```([A-Za-z0-9_+-]*)\n?([\s\S]*?)```/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) {
+      out.push({ kind: "inline", parts: parseInline(text.slice(last, m.index)) });
+    }
+    out.push({ kind: "codeblock", lang: m[1] ?? "", text: m[2] ?? "" });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) {
+    out.push({ kind: "inline", parts: parseInline(text.slice(last)) });
+  }
+  return out;
+}
+
 /**
- * Render bubble text with `[label](url)` links turned into clickable anchors so
- * attachment refs show up properly. For `/uploads/<id>.<imageExt>` links we
- * also render an inline thumbnail above the link so the chat shows what was
- * actually sent after a reload. Optionally highlights case-insensitive matches
- * of `highlight` with `<mark>`.
+ * Render bubble text with markdown-style inline formatting: links, fenced code
+ * blocks, inline `code`, **bold**, *italic*. `/uploads/<id>.<imageExt>` links
+ * also get an inline thumbnail so the chat shows what was actually sent after
+ * a reload. Optionally highlights case-insensitive matches of `highlight` with
+ * `<mark>`.
  */
 function BubbleContent({ text, highlight }: { text: string; highlight?: string }) {
-  const parts = useMemo(() => {
-    const out: Array<{ kind: "text" | "link"; text: string; url?: string }> = [];
-    const re = /\[([^\]]+)\]\(([^)]+)\)/g;
-    let last = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) {
-      if (m.index > last) out.push({ kind: "text", text: text.slice(last, m.index) });
-      out.push({ kind: "link", text: m[1]!, url: m[2]! });
-      last = m.index + m[0].length;
-    }
-    if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
-    return out;
-  }, [text]);
+  const blocks = useMemo(() => parseBlocks(text), [text]);
   return (
     <>
-      {parts.map((p, i) => {
-        if (p.kind !== "link") {
-          return <span key={i}>{highlightText(p.text, highlight)}</span>;
+      {blocks.map((b, bi) => {
+        if (b.kind === "codeblock") {
+          return (
+            <pre key={bi} className="bubble-codeblock">
+              <code>{b.text}</code>
+            </pre>
+          );
         }
-        const url = p.url ?? "";
-        const isImage = isInlineImageUrl(url);
         return (
-          <span key={i} className={isImage ? "bubble-link-image-wrap" : undefined}>
-            {isImage && (
-              <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
-                <img
-                  src={url}
-                  alt={p.text}
-                  className="bubble-image-thumb"
-                  loading="lazy"
-                  onError={(e) => {
-                    // Hide if the upload was deleted or content isn't actually an image.
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-              </a>
-            )}
-            <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-link">
-              {highlightText(p.text, highlight)}
-            </a>
+          <span key={bi}>
+            {b.parts.map((p, i) => {
+              if (p.kind === "text") {
+                return <span key={i}>{highlightText(p.text, highlight)}</span>;
+              }
+              if (p.kind === "code") {
+                return <code key={i} className="bubble-inline-code">{highlightText(p.text, highlight)}</code>;
+              }
+              if (p.kind === "bold") {
+                return <strong key={i}>{highlightText(p.text, highlight)}</strong>;
+              }
+              if (p.kind === "italic") {
+                return <em key={i}>{highlightText(p.text, highlight)}</em>;
+              }
+              const url = p.url;
+              const isImage = isInlineImageUrl(url);
+              return (
+                <span key={i} className={isImage ? "bubble-link-image-wrap" : undefined}>
+                  {isImage && (
+                    <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
+                      <img
+                        src={url}
+                        alt={p.text}
+                        className="bubble-image-thumb"
+                        loading="lazy"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    </a>
+                  )}
+                  <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-link">
+                    {highlightText(p.text, highlight)}
+                  </a>
+                </span>
+              );
+            })}
           </span>
         );
       })}
