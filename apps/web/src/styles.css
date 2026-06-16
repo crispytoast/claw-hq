@@ -348,13 +348,16 @@ a:hover { text-decoration: underline; }
 .message-list {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 1rem max(1rem, calc((100% - 56rem) / 2)) calc(1rem + var(--safe-bottom));
   scroll-behavior: smooth;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   position: relative;
+  min-width: 0;
 }
+.message-list > * { min-width: 0; max-width: 100%; }
 .bubble {
   padding: 0.65rem 1rem;
   border-radius: 16px;
@@ -3402,3 +3405,110 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* ── Chat surface swipe-wrap (mobile: chat ↔ live terminal feed) ─────────── */
+/* On phones (max-width: 720px) the chat surface becomes a horizontal snap
+   container: left snap = chat (message-list + composer), right snap = the
+   live terminal feed of tool calls — same pattern as Oswald HQ. On desktop
+   the terminal panel hides and chat-shell fills the width. */
+.chat-swipe-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.chat-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.chat-terminal-panel { display: none; }
+
+@media (max-width: 720px) {
+  .chat-swipe-wrap {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .chat-swipe-wrap::-webkit-scrollbar { display: none; }
+  .chat-shell {
+    flex: 0 0 100%;
+    width: 100%;
+    scroll-snap-align: start;
+  }
+  .chat-terminal-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 100%;
+    width: 100%;
+    scroll-snap-align: start;
+    background: rgba(0, 0, 0, 0.25);
+    border-left: 1px solid var(--border);
+    min-height: 0;
+  }
+}
+
+.chat-terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 36px;
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.chat-terminal-header-label { color: var(--muted-foreground); }
+.chat-terminal-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: chat-terminal-pulse 1.4s ease-in-out infinite;
+}
+@keyframes chat-terminal-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+.chat-terminal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 12px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: var(--foreground);
+}
+.chat-terminal-empty {
+  color: var(--muted-foreground);
+  text-align: center;
+  padding: 24px 0;
+  opacity: 0.6;
+}
+.chat-terminal-line {
+  padding: 1px 0;
+  display: flex;
+  gap: 6px;
+  word-break: break-word;
+}
+.chat-terminal-line-arrow { color: var(--accent); flex-shrink: 0; }
+.chat-terminal-line-name { color: var(--accent); }
+.chat-terminal-line-summary { opacity: 0.7; margin-left: 6px; }
+.chat-terminal-line-result {
+  padding-left: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted-foreground);
+  opacity: 0.85;
+}
+.chat-terminal-line-result.err { color: #ff8a8a; opacity: 1; }

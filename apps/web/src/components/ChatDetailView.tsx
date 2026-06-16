@@ -409,6 +409,19 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   /** Inline kebab tray for the optional composer buttons (mic + history). */
   const [extrasOpen, setExtrasOpen] = useState(false);
 
+  // Phone-width detection drives the swipe-to-terminal pattern: on mobile the
+  // chat surface becomes a horizontal snap container, tool blocks shift out of
+  // the message list into the terminal pane (same as OHQ).
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 720px)");
+    const sync = () => setIsMobile(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
   // Voice STT — driven by window.ClawHqVoiceBridge (Android-only). voiceAnchor
   // is the start offset in `input` where the live partial begins; everything
   // typed before mic-on is preserved. Same pattern as PM HQ's chat composer.
@@ -1409,8 +1422,14 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     return last !== undefined && last.kind === "message" && last.message.role === "user";
   })();
 
+  const toolItems = useMemo(
+    () => items.flatMap((it) => (it.kind === "tool" ? [it.tool] : [])),
+    [items],
+  );
+
   return (
-    <>
+    <div className="chat-swipe-wrap">
+    <div className="chat-shell">
       <div
         className={`message-list ${dragOver ? "drag-over" : ""}`}
         ref={listRef}
@@ -1433,6 +1452,10 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         )}
         {items.map((it) => {
           if (it.kind === "tool") {
+            // On mobile the tool blocks live in the swipe-right terminal pane
+            // so the chat reads as a clean conversation; desktop keeps them
+            // inline (the terminal pane is hidden on wide viewports).
+            if (isMobile) return null;
             return <ToolBlock key={itemKey(it)} tool={it.tool} />;
           }
           if (it.kind === "approval") {
@@ -1726,6 +1749,72 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           </div>
         </div>
       </div>
+    </div>
+    <ChatTerminalPanel tools={toolItems} live={pending} />
+    </div>
+  );
+}
+
+function ChatTerminalPanel({ tools, live }: { tools: DisplayTool[]; live: boolean }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [tools.length, live]);
+
+  return (
+    <aside className="chat-terminal-panel" aria-label="Live terminal feed">
+      <div className="chat-terminal-header">
+        <span className="chat-terminal-header-label">Terminal</span>
+        {live && <span className="chat-terminal-live-dot" aria-hidden="true" />}
+      </div>
+      <div className="chat-terminal-body" ref={scrollRef}>
+        {tools.length === 0 ? (
+          <div className="chat-terminal-empty">no activity yet</div>
+        ) : (
+          tools.map((t) => <ChatTerminalLine key={t.toolCallId} tool={t} />)
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function ChatTerminalLine({ tool }: { tool: DisplayTool }) {
+  const summary = useMemo(() => {
+    if (typeof tool.args === "object" && tool.args !== null) {
+      const a = tool.args as Record<string, unknown>;
+      const cand =
+        typeof a.command === "string" ? a.command
+        : typeof a.query === "string" ? a.query
+        : typeof a.file_path === "string" ? a.file_path
+        : typeof a.url === "string" ? a.url
+        : typeof a.description === "string" ? a.description
+        : null;
+      if (cand) return cand.length > 120 ? `${cand.slice(0, 117)}…` : cand;
+    }
+    return null;
+  }, [tool.args]);
+  const resultText = useMemo(() => {
+    if (tool.status === "running") return null;
+    const t = formatToolValue(tool.result);
+    if (!t) return null;
+    return t.length > 600 ? `${t.slice(0, 600)}\n…[truncated]` : t;
+  }, [tool.result, tool.status]);
+  return (
+    <>
+      <div className="chat-terminal-line">
+        <span className="chat-terminal-line-arrow">›</span>
+        <span>
+          <span className="chat-terminal-line-name">{tool.name}</span>
+          {summary && <span className="chat-terminal-line-summary">{summary}</span>}
+        </span>
+      </div>
+      {resultText && (
+        <div className={`chat-terminal-line-result ${tool.isError ? "err" : ""}`}>
+          {resultText}
+        </div>
+      )}
     </>
   );
 }
