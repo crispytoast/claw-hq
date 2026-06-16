@@ -407,7 +407,10 @@ export function ChatApp({ user, onLogout }: Props) {
       />
 
       <main className="cl-main">
-        <div className="page-toolbar" style={{ justifyContent: "space-between" }}>
+        <div className="vitals-strip">
+          <SystemHealth />
+        </div>
+        <div className="page-toolbar">
           <button
             type="button"
             className="cl-hamburger"
@@ -427,8 +430,7 @@ export function ChatApp({ user, onLogout }: Props) {
                     : (activeSession?.label ?? "No session"))
               : null}
           </div>
-          <SystemHealth />
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>{toolbar}</div>
+          <div className="page-toolbar-right">{toolbar}</div>
         </div>
 
         {page === "chat" && (
