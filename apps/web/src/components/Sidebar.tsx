@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { SessionSummary } from "./ChatApp.js";
+import type { SessionSummary, ChatRecentSummary, ChatStatus } from "./ChatApp.js";
+
+const CLAWHQ_SESSION_PREFIX = "agent:main:clawhq-";
 import type { User } from "../api.js";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import {
@@ -125,6 +127,12 @@ interface Props {
   onPickProjectMemory(slug: string): void;
   activeWorkspaceMemory: boolean;
   onPickWorkspaceMemory(): void;
+  /** User-facing chat records (clawhq.chats.list across all projects), sorted
+   * by updatedMs desc. Shown in the Sessions group's Recent section. */
+  recentChats: ChatRecentSummary[];
+  /** Per-chat live status: orange (running) / green (done). Drawn next to
+   * each chat row in Recent. */
+  chatStatuses: Map<string, ChatStatus>;
   mobileOpen: boolean;
   onMobileClose(): void;
   onLogout(): void | Promise<void>;
@@ -151,6 +159,8 @@ export function Sidebar({
   onPickProjectMemory,
   activeWorkspaceMemory,
   onPickWorkspaceMemory,
+  recentChats,
+  chatStatuses,
   mobileOpen,
   onMobileClose,
   onLogout,
@@ -163,6 +173,7 @@ export function Sidebar({
   // OHQ pattern: the group that matches the current page starts expanded.
   const [sessionsOpen, setSessionsOpen] = useState(page === "chat" || page === "sessions");
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | string>("all");
   const [menuOpen, setMenuOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
@@ -493,6 +504,15 @@ export function Sidebar({
     });
   }, [sessions, filter]);
 
+  // Agents group = raw OpenClaw runtime sessions MINUS the per-chat backing
+  // sessions Claw HQ auto-creates (those are surfaced by their chat title in
+  // Recent / under Projects). Leaves agent:main:main and any non-clawhq
+  // sessions for advanced/debug use.
+  const agentSessions = useMemo(
+    () => sessions.filter((s) => !s.sessionKey.startsWith(CLAWHQ_SESSION_PREFIX)),
+    [sessions],
+  );
+
   function pick(p: SidebarPage) {
     onSelectPage(p);
     onMobileClose();
@@ -644,40 +664,54 @@ export function Sidebar({
                       </div>
                     )}
 
-                    {filteredSessions.length > 0 && (
+                    {/* Recent = clawhq.chats.list, sorted by updatedMs desc.
+                        The agent-filter chips above are vestigial for chats
+                        (they filter raw sessions, not chats) — hide the
+                        Recent body when a non-"all" filter is active so the
+                        chips still gate something meaningful. */}
+                    {filter === "all" && recentChats.length > 0 && (
                       <div className="cl-section-label">Recent</div>
                     )}
 
                     <div className="cl-list">
-                      {filteredSessions.length === 0 ? (
-                        <div className="cl-list-empty">
-                          {sessions.length === 0 ? "No sessions yet." : "No sessions match this filter."}
-                        </div>
+                      {filter !== "all" ? (
+                        <div className="cl-list-empty">Recent chats ignore the agent filter — switch to All to see them.</div>
+                      ) : recentChats.length === 0 ? (
+                        <div className="cl-list-empty">No chats yet.</div>
                       ) : (
-                        filteredSessions.map((s) => {
-                          const isActive = page === "chat" && s.sessionKey === activeSessionKey;
-                          const agent = s.agentId ?? s.sessionKey.split(":")[1] ?? null;
+                        recentChats.map((chat) => {
+                          const isActive = page === "chat" && chat.id === activeChatId;
+                          const statusKind = chatStatuses.get(chat.id);
                           return (
                             <button
-                              key={s.sessionKey}
+                              key={chat.id}
                               type="button"
                               className={`cl-row ${isActive ? "cl-active" : ""}`}
                               onClick={() => {
-                                onPickSession(s.sessionKey);
+                                onPickChat(chat.id, chat.projectSlug);
                                 onMobileClose();
                               }}
                             >
                               <div className="cl-row-main">
-                                <span className="cl-row-title">{s.label}</span>
+                                <span className="cl-row-title">
+                                  {statusKind && (
+                                    <span
+                                      className={`cl-chat-status cl-chat-status-${statusKind}`}
+                                      aria-label={statusKind === "running" ? "agent running" : "response ready"}
+                                      title={statusKind === "running" ? "Agent running" : "Response ready"}
+                                    />
+                                  )}
+                                  {chat.title || "(untitled)"}
+                                </span>
                               </div>
                               <div className="cl-row-meta">
-                                {agent && (
+                                {chat.projectSlug && (
                                   <>
-                                    <span className="cl-row-tag">{agent}</span>
+                                    <span className="cl-row-tag">{chat.projectSlug}</span>
                                     <span>·</span>
                                   </>
                                 )}
-                                <span>{s.lastActivityMs ? relativeTime(s.lastActivityMs) : "—"}</span>
+                                <span>{chat.updatedMs ? relativeTime(chat.updatedMs) : "—"}</span>
                               </div>
                             </button>
                           );
@@ -893,6 +927,62 @@ export function Sidebar({
                   </div>
                 ) : (
                   <div className="cl-list-empty">No projects yet.</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Agents — raw OpenClaw sessions (default main + any non-Claw HQ
+              runtime sessions). Per-chat backing keys (agent:main:clawhq-*)
+              are hidden because their human-readable rows show up in Recent
+              above and under Projects. */}
+          <div className="cl-sidebar-group">
+            <button
+              type="button"
+              className="cl-group-header"
+              onClick={() => setAgentsOpen((v) => !v)}
+              aria-expanded={agentsOpen}
+            >
+              <span className="cl-group-icon"><Tools /></span>
+              <span>Agents</span>
+              <span className="cl-group-chevron"><Chevron dir={agentsOpen ? "down" : "right"} size={12} /></span>
+            </button>
+            <div className={`cl-group-body ${agentsOpen ? "cl-expanded" : ""}`}>
+              <div className="cl-group-inner">
+                {agentSessions.length === 0 ? (
+                  <div className="cl-list-empty">No background agents.</div>
+                ) : (
+                  <div className="cl-list">
+                    {agentSessions.map((s) => {
+                      const isActive = page === "chat" && s.sessionKey === activeSessionKey;
+                      const agent = s.agentId ?? s.sessionKey.split(":")[1] ?? null;
+                      return (
+                        <button
+                          key={s.sessionKey}
+                          type="button"
+                          className={`cl-row ${isActive ? "cl-active" : ""}`}
+                          title={s.sessionKey}
+                          onClick={() => {
+                            onPickSession(s.sessionKey);
+                            onMobileClose();
+                          }}
+                        >
+                          <div className="cl-row-main">
+                            <span className="cl-row-title">{s.label}</span>
+                          </div>
+                          <div className="cl-row-meta">
+                            {agent && (
+                              <>
+                                <span className="cl-row-tag">{agent}</span>
+                                <span>·</span>
+                              </>
+                            )}
+                            <span>{s.lastActivityMs ? relativeTime(s.lastActivityMs) : "—"}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             </div>

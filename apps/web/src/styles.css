@@ -844,6 +844,33 @@ a:hover { text-decoration: underline; }
 .status-dot-only.warn { background: var(--accent); }
 .status-dot-only.bad { background: #dc5a5a; box-shadow: 0 0 6px rgba(220, 90, 90, 0.5); }
 
+/* Per-chat status dot in the sidebar Recent list.
+   running = amber (request in flight); done = green (response ready). */
+.cl-chat-status {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: 1px;
+  flex-shrink: 0;
+}
+.cl-chat-status-running {
+  background: #f0a230;
+  animation: cl-chat-status-pulse 1.6s ease-in-out infinite;
+}
+.cl-chat-status-done {
+  background: #4aa064;
+  box-shadow: 0 0 4px rgba(74, 160, 100, 0.45);
+}
+@keyframes cl-chat-status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 162, 48, 0.6); }
+  50%      { box-shadow: 0 0 0 4px rgba(240, 162, 48, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cl-chat-status-running { animation: none; }
+}
+
 /* Page toolbar title — centered between hamburger and right-side toolbar
    via the parent .page-toolbar grid. min-width: 0 + max-width let truncation
    kick in without pushing the flanking icons off-screen on narrow phones. */

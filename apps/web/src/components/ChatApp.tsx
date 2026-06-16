@@ -45,6 +45,23 @@ export interface SessionSummary {
   lastActivityMs?: number;
 }
 
+export interface ChatRecentSummary {
+  id: string;
+  projectSlug: string | null;
+  title: string;
+  updatedMs: number;
+  messageCount: number;
+}
+
+/** Per-chat live status. orange = user sent, awaiting response; green = done. */
+export type ChatStatus = "running" | "done";
+
+/** Session keys that back a Claw HQ chat record. We strip these from the
+ * Agents tab (they're surfaced under their human title in Recent / Projects)
+ * and use the 8-char prefix to bridge agent.end events back to a chatId for
+ * status dots + push deep links. */
+const CLAWHQ_SESSION_PREFIX_RE = /^agent:main:clawhq-([A-Za-z0-9-]+)$/;
+
 export function ChatApp({ user, onLogout }: Props) {
   const clientRef = useRef<GatewayClient | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>({ kind: "connecting" });
@@ -65,6 +82,15 @@ export function ChatApp({ user, onLogout }: Props) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
   const [page, setPage] = useState<PageKey>("chat");
+  const [recentChats, setRecentChats] = useState<ChatRecentSummary[]>([]);
+  const [chatStatuses, setChatStatuses] = useState<Map<string, ChatStatus>>(new Map());
+  /** Pending chatId prefix from a /chat-detail/<prefix> deep link. Drained
+   * once recentChats is populated (clawhq.chats.list races mount). */
+  const [pendingChatPrefix, setPendingChatPrefix] = useState<string | null>(null);
+  /** Last sessionKey we saw a clawhq chat event for. Resolves agent.end →
+   * chatId via clawhq.chats.list lookup against the 8-char prefix. */
+  const recentChatsRef = useRef<ChatRecentSummary[]>([]);
+  useEffect(() => { recentChatsRef.current = recentChats; }, [recentChats]);
 
   useEffect(() => {
     const c = new GatewayClient(defaultGatewayUrl());
@@ -112,6 +138,17 @@ export function ChatApp({ user, onLogout }: Props) {
       const chat = path.match(/^\/chat\/(.+)$/);
       if (chat && chat[1]) {
         setActiveKey(decodeURIComponent(chat[1]));
+        setPage("chat");
+        consumed = true;
+      }
+      // /chat-detail/<8-char chatId prefix> — push notification deep-link
+      // emitted by ws-routing.ts when a clawhq-backed chat completes. We
+      // can't always resolve the prefix at mount (clawhq.chats.list may not
+      // have arrived yet), so stash the prefix and let a later effect bind
+      // activeChatId once recentChats lands.
+      const detail = path.match(/^\/chat-detail\/(.+)$/);
+      if (detail && detail[1]) {
+        setPendingChatPrefix(decodeURIComponent(detail[1]));
         setPage("chat");
         consumed = true;
       }
@@ -311,6 +348,91 @@ export function ChatApp({ user, onLogout }: Props) {
   const pill = useMemo(() => statusPill(status), [status]);
 
   // ------------------------------------------------------------------
+  // Recent chats + per-chat status dots.
+  //
+  // Recent list = user-facing chat records from clawhq.chats.list, sorted
+  // by updatedMs desc. Replaces what used to be sessions.list (which
+  // mixed in raw OpenClaw runtime keys).
+  //
+  // chatStatuses: chatId → "running" (orange) | "done" (green).
+  //   - "running" is set in ChatDetailView.sendMessage via onChatStatus.
+  //   - "done" is set here by the global chat-event listener when
+  //     state==="final" arrives for a clawhq-pattern sessionKey.
+  //   - Status persists across chat switches so the sidebar dot survives
+  //     navigating away mid-run.
+  // ------------------------------------------------------------------
+  const handleChatStatus = useCallback((chatId: string, status: ChatStatus) => {
+    setChatStatuses((prev) => {
+      if (prev.get(chatId) === status) return prev;
+      const next = new Map(prev);
+      next.set(chatId, status);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (status.kind !== "ready" || !clientRef.current) return;
+    const c = clientRef.current;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const result = await c.call<{ chats?: ChatRecentSummary[] }>(
+          "clawhq.chats.list",
+          {},
+        );
+        if (cancelled) return;
+        const list = (result.chats ?? []).slice().sort(
+          (a, b) => (b.updatedMs ?? 0) - (a.updatedMs ?? 0),
+        );
+        setRecentChats(list);
+      } catch (err) {
+        // Plugin may not be loaded yet — keep last known list.
+        console.warn("clawhq.chats.list failed:", err);
+      }
+    };
+    void tick();
+    const id = setInterval(() => void tick(), 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [status.kind]);
+
+  // Drain a /chat-detail/<prefix> deep link once chats are loaded.
+  useEffect(() => {
+    if (!pendingChatPrefix || recentChats.length === 0) return;
+    const chat = recentChats.find((c) => c.id.startsWith(pendingChatPrefix));
+    if (chat) {
+      setActiveChatId(chat.id);
+      setActiveChatProject(chat.projectSlug);
+      setActiveProjectSlug(null);
+      setActiveMemoryProject(null);
+      setActiveWorkspaceMemory(false);
+      setPage("chat");
+    }
+    setPendingChatPrefix(null);
+  }, [pendingChatPrefix, recentChats]);
+
+  // Global chat-event listener — sets done when any clawhq-backed session
+  // emits state==="final". Per-chat ChatDetailView still owns the streaming
+  // bubble updates; this layer just sets the sidebar dot so the user sees
+  // the result even if they navigated away.
+  useEffect(() => {
+    if (!clientRef.current) return;
+    const c = clientRef.current;
+    return c.onEvent((ev: OpenClawEvent) => {
+      if (ev.event !== "chat") return;
+      const p = (ev.payload ?? {}) as Record<string, unknown>;
+      if (p.state !== "final") return;
+      const sessionKey = typeof p.sessionKey === "string" ? p.sessionKey : null;
+      if (!sessionKey) return;
+      const m = sessionKey.match(CLAWHQ_SESSION_PREFIX_RE);
+      if (!m || !m[1]) return;
+      const prefix = m[1];
+      const chat = recentChatsRef.current.find((c2) => c2.id.startsWith(prefix));
+      if (!chat) return;
+      handleChatStatus(chat.id, "done");
+    });
+  }, [handleChatStatus]);
+
+  // ------------------------------------------------------------------
   // Infinite back stack — every screen-changing state update pushes a
   // snapshot to window.history. Android's back button (MainActivity
   // wv.canGoBack/goBack) and the browser's back gesture both fire
@@ -472,6 +594,8 @@ export function ChatApp({ user, onLogout }: Props) {
         onPickProjectMemory={handlePickProjectMemory}
         activeWorkspaceMemory={activeWorkspaceMemory}
         onPickWorkspaceMemory={handlePickWorkspaceMemory}
+        recentChats={recentChats}
+        chatStatuses={chatStatuses}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onLogout={onLogout}
@@ -547,6 +671,7 @@ export function ChatApp({ user, onLogout }: Props) {
                 status={status}
                 onTitleChange={handleChatTitle}
                 initialSearchQuery={chatSearchQuery ?? undefined}
+                onChatStatus={handleChatStatus}
               />
             ) : activeKey ? (
               <ChatPane

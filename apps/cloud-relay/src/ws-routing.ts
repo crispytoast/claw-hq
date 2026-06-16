@@ -51,10 +51,26 @@ function notificationForFrame(envelope: TunnelEnvelope):
   if (frame.event === "agent" && data.phase === "end") {
     const session = typeof data.sessionId === "string" ? data.sessionId : "session";
     const status = typeof data.status === "string" ? data.status : "finished";
-    const title = `Agent run ${status}`;
     const summary = typeof data.summary === "string" ? data.summary : `Session ${session}.`;
+    // Route clawhq-backed chat sessions to a chat-record deep link so the tap
+    // lands on ChatDetailView (the human-titled chat) instead of the raw
+    // ChatPane (sessionKey). Pattern: agent:main:clawhq-<8 char chatId
+    // prefix>. Background/main agent runs get the legacy /chat/<sessionId>
+    // link.
+    const clawhq = typeof data.sessionId === "string"
+      ? data.sessionId.match(/^agent:main:clawhq-([A-Za-z0-9-]+)$/)
+      : null;
+    if (clawhq && clawhq[1]) {
+      return {
+        title: "Response ready",
+        body: summary.length > 120 ? summary.slice(0, 117) + "..." : summary,
+        kind: "chat.complete",
+        deepLink: `/chat-detail/${clawhq[1]}`,
+        data: { chatIdPrefix: clawhq[1] },
+      };
+    }
     return {
-      title,
+      title: `Agent run ${status}`,
       body: summary,
       kind: "agent.end",
       deepLink: typeof data.sessionId === "string" ? `/chat/${data.sessionId}` : null,

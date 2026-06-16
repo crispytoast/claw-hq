@@ -89,6 +89,9 @@ interface Props {
    * Threaded through from the sidebar search → ChatApp → here.
    */
   initialSearchQuery?: string;
+  /** Set the sidebar status dot for this chat. Orange (running) on send;
+   * ChatApp's global listener flips to green on state==="final". */
+  onChatStatus?(chatId: string, status: "running" | "done"): void;
 }
 
 interface PersistedMessage {
@@ -376,7 +379,7 @@ async function buildMemoryPreamble(
   }
 }
 
-export function ChatDetailView({ client, chatId, projectSlug, status, onTitleChange, initialSearchQuery }: Props) {
+export function ChatDetailView({ client, chatId, projectSlug, status, onTitleChange, initialSearchQuery, onChatStatus }: Props) {
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [chatTitle, setChatTitle] = useState<string>("");
   const [input, setInput] = useState("");
@@ -1246,6 +1249,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     setInput("");
     setErr("");
     setPending(true);
+    onChatStatus?.(chatId, "running");
     for (const a of pendingAttachments) revokePreviewUrl(a.previewUrl);
     setAttachments([]);
 
@@ -1312,7 +1316,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       ]);
       setPending(false);
     }
-  }, [client, chatId, projectSlug, sessionKey, input, attachments, status.kind, pending, noteOwnPersist, revokePreviewUrl, listening]);
+  }, [client, chatId, projectSlug, sessionKey, input, attachments, status.kind, pending, noteOwnPersist, revokePreviewUrl, listening, onChatStatus]);
 
   // Answer an inline AskUserQuestion tap-card: send the label as a new user
   // turn (same as OHQ's onAnswer flow). Optimistic-flips the card to answered
