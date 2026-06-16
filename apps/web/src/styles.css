@@ -2513,10 +2513,19 @@ a:hover { text-decoration: underline; }
   overflow-y: auto;
 }
 @media (max-width: 720px) {
-  .cl-docs-wrap { grid-template-columns: 1fr; }
-  .cl-docs-side { display: none; }
-  /* On mobile we currently always show the tree; tap a file to load it.
-     A future polish: toggle between tree and viewer with a back button. */
+  /* Stack tree/search above the viewer. Cap the tree at ~38vh so the viewer
+     stays reachable without scrolling all the way past the file list. */
+  .cl-docs-wrap {
+    display: flex;
+    flex-direction: column;
+  }
+  .cl-docs-side {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    max-height: 38vh;
+    flex-shrink: 0;
+  }
+  .cl-docs-main { flex: 1; min-height: 0; }
 }
 
 /* ── Workspace memory page (Phase C step 39) ──────────────────────────────── */
@@ -2672,8 +2681,18 @@ a:hover { text-decoration: underline; }
   overflow-y: auto;
 }
 @media (max-width: 720px) {
-  .cl-memory-wrap { grid-template-columns: 1fr; }
-  .cl-memory-side { display: none; }
+  /* Same stack-on-mobile treatment as the docs page. */
+  .cl-memory-wrap {
+    display: flex;
+    flex-direction: column;
+  }
+  .cl-memory-side {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    max-height: 42vh;
+    flex-shrink: 0;
+  }
+  .cl-memory-main { flex: 1; min-height: 0; }
 }
 
 /* ── Tasks rollup page (Phase C step 40) ──────────────────────────────────── */
