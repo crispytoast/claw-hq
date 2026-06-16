@@ -2790,3 +2790,111 @@ a:hover { text-decoration: underline; }
   min-width: 0;
   word-break: break-word;
 }
+
+/* ── Home dashboard (Phase C step 41) ─────────────────────────────────────── */
+.cl-home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  padding: 20px 24px 12px;
+}
+.cl-home-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.cl-home-tile:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.cl-home-tile.is-error {
+  border-color: rgba(224, 122, 122, 0.4);
+}
+.cl-home-tile-icon {
+  font-size: 1.7rem;
+  flex-shrink: 0;
+}
+.cl-home-tile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cl-home-tile-value {
+  font-size: 1.65rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1;
+}
+.cl-home-tile-label {
+  font-size: 0.95rem;
+  color: var(--text);
+}
+.cl-home-tile-sub {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.cl-home-tile.is-error .cl-home-tile-sub {
+  color: #e07a7a;
+}
+.cl-home-recent {
+  padding: 20px 24px;
+}
+.cl-home-section-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.cl-home-recent-empty {
+  padding: 20px 8px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.cl-home-recent-row {
+  display: grid;
+  grid-template-columns: 60px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+.cl-home-recent-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.cl-home-recent-kind {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.14);
+  border-radius: 4px;
+  padding: 2px 6px;
+  text-align: center;
+}
+.cl-home-recent-label {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cl-home-recent-sub {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.cl-home-recent-time {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
