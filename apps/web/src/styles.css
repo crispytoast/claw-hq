@@ -384,26 +384,33 @@ a:hover { text-decoration: underline; }
 }
 .composer .row {
   display: flex;
-  gap: 0.5rem;
-  align-items: center;
+  flex-direction: column;
+  gap: 0.3rem;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--sidebar-border);
   border-radius: 24px;
-  padding: 0.4rem 0.4rem 0.4rem 0.85rem;
+  padding: 0.5rem 0.65rem;
   transition: border-color 120ms ease;
 }
 .composer .row:focus-within { border-color: rgba(var(--accent-rgb), 0.4); }
 .composer textarea {
-  flex: 1;
+  width: 100%;
   resize: none;
-  min-height: 2rem;
+  min-height: 2.2rem;
   max-height: 12.5rem;
   background: transparent;
   border: 0;
-  padding: 0.4rem 0;
+  padding: 0.35rem 0.35rem;
   font-size: 0.95rem;
   color: var(--foreground);
 }
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.1rem;
+}
+.composer-actions-spacer { flex: 1; }
 .composer textarea:focus { outline: none; }
 .composer button.send {
   height: 2.4rem;
@@ -629,18 +636,96 @@ a:hover { text-decoration: underline; }
   font-family: ui-monospace, "JetBrains Mono", monospace;
   font-size: 0.72rem;
 }
-.chat-subheader-model {
+/* Composer model chip + popover — Phase C step 44.
+   Sub-header model chip is gone; the model selector now lives in the composer
+   action row beside the + attach button (OHQ pattern). */
+.composer-model-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.composer-model-chip {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
   border: 1px solid var(--sidebar-border);
   background: rgba(255, 255, 255, 0.03);
-  padding: 0.1rem 0.55rem 0.1rem 0.65rem;
+  color: var(--muted-foreground);
+  padding: 0.18rem 0.55rem 0.18rem 0.7rem;
   border-radius: 999px;
-  margin-left: auto;
-  cursor: default;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  text-transform: capitalize;
 }
-.chat-subheader-model-caret { opacity: 0.65; font-size: 0.8em; }
+.composer-model-chip:hover:not(:disabled),
+.composer-model-chip.active {
+  background: rgba(var(--accent-rgb), 0.08);
+  border-color: rgba(var(--accent-rgb), 0.45);
+  color: var(--foreground);
+}
+.composer-model-chip:disabled { opacity: 0.6; cursor: wait; }
+.composer-model-caret { opacity: 0.65; font-size: 0.85em; }
+
+.composer-model-menu {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  left: 0;
+  min-width: 16rem;
+  max-width: 22rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  background: var(--bg-elev, var(--bg));
+  border: 1px solid var(--sidebar-border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 0.3rem;
+  z-index: 200;
+  animation: chat-item-in 140ms ease-out;
+}
+.composer-model-menu-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  background: transparent;
+  border: 0;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.composer-model-menu-row:hover:not(:disabled) { background: rgba(255, 255, 255, 0.05); }
+.composer-model-menu-row.active {
+  background: rgba(var(--accent-rgb), 0.10);
+  outline: 1px solid rgba(var(--accent-rgb), 0.35);
+}
+.composer-model-menu-row:disabled { opacity: 0.55; cursor: wait; }
+.composer-model-menu-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.composer-model-menu-sub {
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+}
+.composer-model-menu-err {
+  font-size: 0.72rem;
+  color: #dc5a5a;
+  padding: 0.4rem 0.6rem 0.55rem;
+}
+.composer-model-menu-loading,
+.composer-model-menu-empty {
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  padding: 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
 
 .empty {
   text-align: center;

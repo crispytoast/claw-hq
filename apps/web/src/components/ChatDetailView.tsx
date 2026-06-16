@@ -131,6 +131,28 @@ interface DisplayMessage {
   streaming?: boolean;
 }
 
+interface ModelEntry {
+  id: string;
+  provider?: string;
+  label?: string;
+  isDefault?: boolean;
+}
+interface ModelsListResp {
+  models?: ModelEntry[];
+  entries?: ModelEntry[];
+}
+interface SessionRowMin {
+  sessionKey?: string;
+  key?: string;
+  model?: string;
+  resolvedModel?: string;
+}
+interface SessionsListResp {
+  sessions?: SessionRowMin[];
+  rows?: SessionRowMin[];
+  items?: SessionRowMin[];
+}
+
 interface DisplayTool {
   toolCallId: string;
   name: string;
@@ -371,6 +393,12 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const sessionKey = useMemo(() => sessionKeyFor(chatId), [chatId]);
+  /** Currently-active model for this chat's session. Null = gateway default. */
+  const [currentModel, setCurrentModel] = useState<string | null>(null);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [availableModels, setAvailableModels] = useState<ModelEntry[] | null>(null);
+  const [modelMenuErr, setModelMenuErr] = useState<string | null>(null);
+  const [modelPatching, setModelPatching] = useState(false);
 
   // Voice STT — driven by window.ClawHqVoiceBridge (Android-only). voiceAnchor
   // is the start offset in `input` where the live partial begins; everything
@@ -1124,6 +1152,74 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     });
   }, [client, chatId]);
 
+  // Fetch the session's currently-active model so the chip shows the truth.
+  // Soft-fails — gateway builds that don't surface model on sessions.list will
+  // simply leave the chip showing "Default".
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const resp = await client.call<SessionsListResp>("sessions.list", {});
+        if (cancelled) return;
+        const rows = resp.sessions ?? resp.rows ?? resp.items ?? [];
+        const ours = rows.find(
+          (r) => (r.sessionKey ?? r.key) === sessionKey,
+        );
+        if (ours?.resolvedModel) setCurrentModel(ours.resolvedModel);
+        else if (ours?.model) setCurrentModel(ours.model);
+      } catch (e) {
+        // Don't surface — this is best-effort enrichment.
+        console.warn("sessions.list (model probe) failed:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [client, sessionKey]);
+
+  const openModelMenu = useCallback(async () => {
+    setModelMenuOpen((v) => !v);
+    if (availableModels !== null) return;
+    setModelMenuErr(null);
+    try {
+      const resp = await client.call<ModelsListResp>("models.list", {});
+      const list = resp.models ?? resp.entries ?? [];
+      setAvailableModels(list);
+    } catch (e) {
+      setModelMenuErr(e instanceof Error ? e.message : String(e));
+      setAvailableModels([]);
+    }
+  }, [client, availableModels]);
+
+  const pickModel = useCallback(
+    async (modelId: string | null) => {
+      if (modelPatching) return;
+      setModelPatching(true);
+      setModelMenuErr(null);
+      try {
+        const result = await client.call<{ resolvedModel?: string; model?: string }>(
+          "sessions.patch",
+          modelId === null
+            ? { key: sessionKey, model: null }
+            : { key: sessionKey, model: modelId },
+        );
+        const next = result?.resolvedModel ?? result?.model ?? modelId;
+        setCurrentModel(next);
+        setModelMenuOpen(false);
+      } catch (e) {
+        setModelMenuErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setModelPatching(false);
+      }
+    },
+    [client, sessionKey, modelPatching],
+  );
+
+  const modelLabel = useMemo(() => {
+    if (!currentModel) return "Default";
+    // Trim provider prefix for the chip ("anthropic:claude-sonnet-4-6" → "sonnet 4.6").
+    const tail = currentModel.split("/").pop()!.split(":").pop()!;
+    return tail.replace(/^claude-/, "").replace(/-/g, " ");
+  }, [currentModel]);
+
   const sendMessage = useCallback(async () => {
     const text = input.trim();
     const pendingAttachments = attachments;
@@ -1312,9 +1408,6 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             {projectSlug}
           </span>
         )}
-        <span className="chat-subheader-model" title="Per-chat model override coming soon — set defaults from Models page">
-          Default<span className="chat-subheader-model-caret" aria-hidden="true">⌄</span>
-        </span>
       </div>
       <div
         className={`message-list ${dragOver ? "drag-over" : ""}`}
@@ -1484,53 +1577,10 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
           </div>
         )}
         <div className="row">
-          {voiceAvailable && (
-            <button
-              type="button"
-              className={`composer-mic ${listening ? "listening" : ""}`}
-              aria-label={listening ? "Stop voice input" : "Start voice input"}
-              title={listening ? "Stop voice input" : "Voice input"}
-              disabled={status.kind !== "ready" || pending}
-              onClick={toggleVoice}
-            >🎤</button>
-          )}
-          <button
-            type="button"
-            className="composer-attach"
-            aria-label="Attach files"
-            title="Attach files"
-            disabled={status.kind !== "ready" || pending}
-            onClick={() => fileInputRef.current?.click()}
-          >＋</button>
-          {historyAttachments.length > 0 && (
-            <button
-              type="button"
-              className={`composer-attach composer-history-trigger ${showHistoryPicker ? "active" : ""}`}
-              aria-label="Attach from history"
-              title={`Re-attach (${historyAttachments.length} prior)`}
-              disabled={status.kind !== "ready" || pending}
-              onClick={() => setShowHistoryPicker((v) => !v)}
-            >
-              📋<span className="composer-history-trigger-badge">{historyAttachments.length}</span>
-            </button>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            style={{ display: "none" }}
-            onChange={(e) => {
-              if (e.target.files?.length) void addFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => {
-              // If the user is editing manually while listening, drop the
-              // voice anchor so the next partial starts a fresh region after
-              // the current cursor.
               if (listening) voiceAnchorRef.current = e.target.selectionStart;
               setInput(e.target.value);
             }}
@@ -1547,14 +1597,122 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             disabled={status.kind !== "ready" || pending}
             rows={1}
           />
-          <button
-            className="send"
-            onClick={() => void sendMessage()}
-            disabled={!canSend}
-            aria-label="send"
-          >
-            {pending ? <span className="spinner" /> : "↑"}
-          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              if (e.target.files?.length) void addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <div className="composer-actions">
+            <button
+              type="button"
+              className="composer-attach"
+              aria-label="Attach files"
+              title="Attach files"
+              disabled={status.kind !== "ready" || pending}
+              onClick={() => fileInputRef.current?.click()}
+            >＋</button>
+            {voiceAvailable && (
+              <button
+                type="button"
+                className={`composer-mic ${listening ? "listening" : ""}`}
+                aria-label={listening ? "Stop voice input" : "Start voice input"}
+                title={listening ? "Stop voice input" : "Voice input"}
+                disabled={status.kind !== "ready" || pending}
+                onClick={toggleVoice}
+              >🎤</button>
+            )}
+            {historyAttachments.length > 0 && (
+              <button
+                type="button"
+                className={`composer-attach composer-history-trigger ${showHistoryPicker ? "active" : ""}`}
+                aria-label="Attach from history"
+                title={`Re-attach (${historyAttachments.length} prior)`}
+                disabled={status.kind !== "ready" || pending}
+                onClick={() => setShowHistoryPicker((v) => !v)}
+              >
+                📋<span className="composer-history-trigger-badge">{historyAttachments.length}</span>
+              </button>
+            )}
+            <div className="composer-model-wrap">
+              <button
+                type="button"
+                className={`composer-model-chip ${modelMenuOpen ? "active" : ""}`}
+                aria-haspopup="listbox"
+                aria-expanded={modelMenuOpen}
+                title={currentModel ? `Active model: ${currentModel}` : "Using gateway default model — tap to pick one"}
+                onClick={() => void openModelMenu()}
+                disabled={modelPatching}
+              >
+                {modelLabel}<span className="composer-model-caret" aria-hidden="true">⌄</span>
+              </button>
+              {modelMenuOpen && (
+                <div
+                  className="composer-model-menu"
+                  role="listbox"
+                  onMouseLeave={() => setModelMenuOpen(false)}
+                >
+                  {modelMenuErr && (
+                    <div className="composer-model-menu-err">{modelMenuErr}</div>
+                  )}
+                  {availableModels === null ? (
+                    <div className="composer-model-menu-loading">
+                      <span className="spinner" /> Loading models…
+                    </div>
+                  ) : availableModels.length === 0 ? (
+                    <div className="composer-model-menu-empty">
+                      No models exposed by gateway. Try the Models page.
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        role="option"
+                        className={`composer-model-menu-row ${currentModel === null ? "active" : ""}`}
+                        onClick={() => void pickModel(null)}
+                        disabled={modelPatching}
+                      >
+                        <span className="composer-model-menu-name">Default</span>
+                        <span className="composer-model-menu-sub">gateway-resolved</span>
+                      </button>
+                      {availableModels.map((m) => {
+                        const isActive = currentModel === m.id || (currentModel === null && m.isDefault);
+                        return (
+                          <button
+                            key={m.id}
+                            type="button"
+                            role="option"
+                            className={`composer-model-menu-row ${isActive ? "active" : ""}`}
+                            onClick={() => void pickModel(m.id)}
+                            disabled={modelPatching}
+                          >
+                            <span className="composer-model-menu-name">{m.label ?? m.id}</span>
+                            <span className="composer-model-menu-sub">
+                              {m.provider ?? ""}{m.isDefault ? " · default" : ""}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="composer-actions-spacer" />
+            <button
+              type="button"
+              className="send"
+              onClick={() => void sendMessage()}
+              disabled={!canSend}
+              aria-label="send"
+            >
+              {pending ? <span className="spinner" /> : "↑"}
+            </button>
+          </div>
         </div>
       </div>
     </>
