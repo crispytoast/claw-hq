@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
+import { Chat, ArrowUp } from "./icons.js";
 
 interface Props {
   client: GatewayClient;
@@ -196,7 +197,7 @@ export function ChatPane({ client, sessionKey, status }: Props) {
       <div className="message-list" ref={listRef}>
         {messages.length === 0 && status.kind === "ready" && (
           <div className="empty">
-            <div className="big">💬</div>
+            <div className="big"><Chat size={28} /></div>
             Send your first message to <code>{sessionKey}</code>
           </div>
         )}
@@ -235,7 +236,7 @@ export function ChatPane({ client, sessionKey, status }: Props) {
             disabled={!canSend}
             aria-label="send"
           >
-            {pending ? <span className="spinner" /> : "↑"}
+            {pending ? <span className="spinner" /> : <ArrowUp size={15} />}
           </button>
         </div>
       </div>

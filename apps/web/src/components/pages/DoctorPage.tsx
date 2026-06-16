@@ -1,6 +1,7 @@
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 import { usePageRpc } from "./usePageRpc.js";
+import { Stethoscope } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -42,7 +43,7 @@ export function DoctorPage({ client, status }: Props) {
             </div>
           )}
           {components.length === 0 && data?.status === undefined && (
-            <div className="empty"><div className="big">🩺</div>No diagnostic data.</div>
+            <div className="empty"><div className="big"><Stethoscope size={28} /></div>No diagnostic data.</div>
           )}
           <ul className="page-list">
             {components.map((c) => (

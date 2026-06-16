@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 import { usePageRpc } from "./usePageRpc.js";
+import { Check } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -55,7 +56,7 @@ export function ApprovalsPage({ client, status }: Props) {
       {loading && <div className="empty"><div className="spinner" />Loading…</div>}
       {error && <div className="alert error">{error}</div>}
       {!loading && !error && approvals.length === 0 && (
-        <div className="empty"><div className="big">✅</div>No approvals pending.</div>
+        <div className="empty"><div className="big"><Check size={28} /></div>No approvals pending.</div>
       )}
       <ul className="page-list">
         {approvals.map((a) => (

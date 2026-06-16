@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { requireSudo } from "../SudoGate.js";
+import { Check } from "../icons.js";
 
 interface PluginEntry {
   id: string;
@@ -182,7 +183,7 @@ export function SettingsPluginsTab({ client, status }: Props) {
 
       {action.kind === "ok" && (
         <div className="settings-card pairing-issued">
-          {action.verb === "install" ? "Installed" : "Uninstalled"} <code>{action.id}</code> ✓
+          {action.verb === "install" ? "Installed" : "Uninstalled"} <code>{action.id}</code> <Check size={12} style={{ verticalAlign: "-2px" }} />
           <div style={{ marginTop: 6 }}>
             <button className="btn-ghost" onClick={() => setAction({ kind: "idle" })}>Dismiss</button>
           </div>

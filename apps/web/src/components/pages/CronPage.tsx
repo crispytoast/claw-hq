@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
+import { Clock, Chevron } from "../icons.js";
 
 interface CronJobPayload {
   kind?: "systemEvent" | "agentTurn" | string;
@@ -424,7 +425,7 @@ export function CronPage({ client, status }: Props) {
       )}
       {jobs && jobs.length === 0 && !loading && !error && !editing && (
         <div className="empty">
-          <div className="big">⏰</div>
+          <div className="big"><Clock size={28} /></div>
           No cron jobs configured. Tap <strong>+ New job</strong> above to create one,
           or use <code>openclaw cron add</code> from the CLI.
         </div>
@@ -446,7 +447,7 @@ export function CronPage({ client, status }: Props) {
                     style={{ display: "flex", alignItems: "center", gap: 12, background: "transparent", border: 0, padding: 0, textAlign: "left", color: "inherit", cursor: "pointer" }}
                     onClick={() => toggleExpand(jobId)}
                   >
-                    <span style={{ color: "var(--muted-foreground)", width: 14 }}>{isExpanded ? "▾" : "▸"}</span>
+                    <span style={{ color: "var(--muted-foreground)", width: 14, display: "inline-flex" }}><Chevron dir={isExpanded ? "down" : "right"} size={12} /></span>
                     <div className="page-row-main">
                       <div className="page-row-title">{jobLabel(j)}</div>
                       <div className="page-row-subtitle" style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: "0.8rem" }}>

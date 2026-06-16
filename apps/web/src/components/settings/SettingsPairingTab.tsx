@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type PairingToken } from "../../api.js";
 import { requireSudo } from "../SudoGate.js";
+import { Check } from "../icons.js";
 
 interface IssuedToken {
   pairingToken: string;
@@ -119,7 +120,7 @@ export function SettingsPairingTab() {
             <button
               className="btn-primary"
               onClick={() => void copyToClipboard(issued.pairCommand)}
-            >{copied ? "Copied ✓" : "Copy command"}</button>
+            >{copied ? <>Copied <Check size={12} style={{ verticalAlign: "-2px" }} /></> : "Copy command"}</button>
             <button className="btn-ghost" onClick={() => setIssued(null)}>Dismiss</button>
           </div>
         </div>

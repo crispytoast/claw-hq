@@ -4,6 +4,10 @@ import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { lineDiff, parseFileEditArgs, statsFor, toHunks } from "./diff.js";
 import type { DiffHunk, ParsedFileEdit } from "./diff.js";
 import { extractHistoryAttachments, type HistoryAttachment } from "./history-attachments.js";
+import {
+  Plus, Mic, Clipboard, Image, X, Chevron, Hourglass, Chat, ArrowUp, Kebab,
+  Tools, Pencil, Hand, Clip,
+} from "./icons.js";
 
 type AttachmentSource =
   | { kind: "file"; file: File }
@@ -1412,13 +1416,13 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       >
         {loading && (
           <div className="empty">
-            <div className="big">⏳</div>
+            <div className="big"><Hourglass size={28} /></div>
             Loading chat…
           </div>
         )}
         {!loading && items.length === 0 && status.kind === "ready" && (
           <div className="empty">
-            <div className="big">💬</div>
+            <div className="big"><Chat size={28} /></div>
             Send your first message
             {projectSlug ? <> — project context for <code>{projectSlug}</code> will be attached.</> : null}
           </div>
@@ -1489,7 +1493,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
                 className="composer-history-picker-close"
                 aria-label="Close"
                 onClick={() => setShowHistoryPicker(false)}
-              >✕</button>
+              ><X size={11} /></button>
             </div>
             {historyAttachments.length === 0 ? (
               <div className="composer-history-picker-empty">
@@ -1550,7 +1554,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
                   className="attachment-icon"
                   style={{ display: a.previewUrl ? "none" : undefined }}
                 >
-                  {a.mimeType.startsWith("image/") ? "🖼️" : "📎"}
+                  {a.mimeType.startsWith("image/") ? <Image size={12} /> : <Clipboard size={12} />}
                 </span>
                 <span className="attachment-name" title={a.filename}>{a.filename}</span>
                 <span className="attachment-size">{formatSize(a.size)}</span>
@@ -1559,7 +1563,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
                   className="attachment-remove"
                   aria-label={`Remove ${a.filename}`}
                   onClick={() => removeAttachment(a.localId)}
-                >✕</button>
+                ><X size={11} /></button>
               </div>
             ))}
             {[...uploading].map((localId) => (
@@ -1609,7 +1613,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
               title="Attach files"
               disabled={status.kind !== "ready" || pending}
               onClick={() => fileInputRef.current?.click()}
-            >＋</button>
+            ><Plus size={14} /></button>
             {(voiceAvailable || historyAttachments.length > 0) && (
               <button
                 type="button"
@@ -1617,7 +1621,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
                 aria-label={extrasOpen ? "Hide extras" : "More options"}
                 title="More options"
                 onClick={() => setExtrasOpen((v) => !v)}
-              >⋯</button>
+              ><Kebab size={14} /></button>
             )}
             {extrasOpen && voiceAvailable && (
               <button
@@ -1627,7 +1631,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
                 title={listening ? "Stop voice input" : "Voice input"}
                 disabled={status.kind !== "ready" || pending}
                 onClick={toggleVoice}
-              >🎤</button>
+              ><Mic size={14} /></button>
             )}
             {extrasOpen && historyAttachments.length > 0 && (
               <button
@@ -1638,7 +1642,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
                 disabled={status.kind !== "ready" || pending}
                 onClick={() => setShowHistoryPicker((v) => !v)}
               >
-                📋<span className="composer-history-trigger-badge">{historyAttachments.length}</span>
+                <Clipboard size={14} /><span className="composer-history-trigger-badge">{historyAttachments.length}</span>
               </button>
             )}
             <div className="composer-model-wrap">
@@ -1651,7 +1655,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
                 onClick={() => void openModelMenu()}
                 disabled={modelPatching}
               >
-                {modelLabel}<span className="composer-model-caret" aria-hidden="true">⌄</span>
+                {modelLabel}<span className="composer-model-caret" aria-hidden="true"><Chevron dir="down" size={12} /></span>
               </button>
               {modelMenuOpen && (
                 <div
@@ -1713,7 +1717,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
               disabled={!canSend}
               aria-label="send"
             >
-              {pending ? <span className="spinner" /> : "↑"}
+              {pending ? <span className="spinner" /> : <ArrowUp size={15} />}
             </button>
           </div>
         </div>
@@ -1770,8 +1774,8 @@ function ToolBlock({ tool }: { tool: DisplayTool }) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
-        <span className="tool-block-chevron">{open ? "▾" : "▸"}</span>
-        <span className="tool-block-icon">{fileEdits ? "📝" : "🔧"}</span>
+        <span className="tool-block-chevron"><Chevron dir={open ? "down" : "right"} size={12} /></span>
+        <span className="tool-block-icon">{fileEdits ? <Pencil size={13} /> : <Tools size={13} />}</span>
         <span className="tool-block-name">{tool.name}</span>
         {subtitle && <span className="tool-block-subtitle">{subtitle}</span>}
         {fileEdits && <DiffHeaderStats edits={fileEdits} />}
@@ -1978,7 +1982,7 @@ function ApprovalBlock({
   return (
     <div className={`approval-block ${approval.status}`}>
       <div className="approval-block-header">
-        <span className="approval-block-icon">✋</span>
+        <span className="approval-block-icon"><Hand size={14} /></span>
         <span className="approval-block-title">Exec approval</span>
         <span className={`status-pill ${statusClass}`}>
           <span className="status-dot" />
@@ -2223,13 +2227,19 @@ function renderInlinePart(p: InlinePart, i: number, highlight?: string): React.R
   if (p.kind === "italic") return <em key={i}>{highlightText(p.text, highlight)}</em>;
   const url = p.url;
   const isImage = isInlineImageUrl(url);
+  // Attachment links are persisted as `[📎 filename](url)` in chat history
+  // (kept emoji for parser back-compat with OHQ-imported chats). Strip the
+  // emoji from the rendered label and prepend a Clip icon so the chat UI
+  // stays emoji-free even though the wire format keeps the marker.
+  const isAttachment = p.text.startsWith("📎");
+  const label = isAttachment ? p.text.replace(/^📎\s*/, "") : p.text;
   return (
     <span key={i} className={isImage ? "bubble-link-image-wrap" : undefined}>
       {isImage && (
         <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
           <img
             src={url}
-            alt={p.text}
+            alt={label}
             className="bubble-image-thumb"
             loading="lazy"
             onError={(e) => { e.currentTarget.style.display = "none"; }}
@@ -2237,7 +2247,8 @@ function renderInlinePart(p: InlinePart, i: number, highlight?: string): React.R
         </a>
       )}
       <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-link">
-        {highlightText(p.text, highlight)}
+        {isAttachment && <Clip size={12} style={{ marginRight: 4, verticalAlign: "-2px" }} />}
+        {highlightText(label, highlight)}
       </a>
     </span>
   );

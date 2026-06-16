@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 import { requireSudo } from "../SudoGate.js";
+import { Settings, Check } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -300,7 +301,7 @@ export function ConfigEditorPage({ client, status }: Props) {
         <div className="config-editor-pane">
           {!selectedLeaf ? (
             <div className="empty">
-              <div className="big">⚙️</div>
+              <div className="big"><Settings size={28} /></div>
               Pick a path on the left to edit.
             </div>
           ) : (
@@ -352,7 +353,7 @@ export function ConfigEditorPage({ client, status }: Props) {
                 )}
                 {save.kind === "ok" && save.path === selectedLeaf.path && (
                   <span style={{ color: "#6fcf97", fontSize: "0.85rem" }}>
-                    Saved ✓ {save.reloadKind ? `(${RELOAD_LABEL[save.reloadKind] ?? save.reloadKind})` : null}
+                    Saved <Check size={12} style={{ verticalAlign: "-2px" }} /> {save.reloadKind ? `(${RELOAD_LABEL[save.reloadKind] ?? save.reloadKind})` : null}
                   </span>
                 )}
                 {save.kind === "error" && save.path === selectedLeaf.path && (

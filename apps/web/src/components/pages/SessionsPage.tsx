@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 import { usePageRpc } from "./usePageRpc.js";
+import { Chat } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -60,7 +61,7 @@ export function SessionsPage({ client, status, onOpenSession }: Props) {
       {loading && <div className="empty"><div className="spinner" />Loading…</div>}
       {error && <div className="alert error">{error}</div>}
       {!loading && !error && sessions.length === 0 && (
-        <div className="empty"><div className="big">💬</div>No sessions.</div>
+        <div className="empty"><div className="big"><Chat size={28} /></div>No sessions.</div>
       )}
       <ul className="page-list">
         {sessions.map((s, i) => {

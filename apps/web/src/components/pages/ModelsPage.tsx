@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 import { usePageRpc } from "./usePageRpc.js";
+import { Models as ModelsIcon } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -205,7 +206,7 @@ export function ModelsPage({ client, status }: Props) {
       {loading && <div className="empty"><div className="spinner" />Loading…</div>}
       {error && <div className="alert error">{error}</div>}
       {!loading && !error && models.length === 0 && (
-        <div className="empty"><div className="big">🧮</div>No models registered.</div>
+        <div className="empty"><div className="big"><ModelsIcon size={28} /></div>No models registered.</div>
       )}
       <div className="mcp-groups">
         {Array.from(grouped.entries()).map(([provider, list]) => (

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
+import { Chevron, Document } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -130,7 +131,7 @@ function TreeRow({ node, depth, activePath, expanded, onToggle, onPick }: TreeRo
           style={{ paddingLeft: depth * 14 + 12 }}
           onClick={() => onToggle(node.path)}
         >
-          <span className="cl-docs-tree-twisty">{isOpen ? "▾" : "▸"}</span>
+          <span className="cl-docs-tree-twisty"><Chevron dir={isOpen ? "down" : "right"} size={11} /></span>
           <span className="cl-docs-tree-name">{node.name || "/"}</span>
         </div>
         {isOpen &&
@@ -155,7 +156,7 @@ function TreeRow({ node, depth, activePath, expanded, onToggle, onPick }: TreeRo
       style={{ paddingLeft: depth * 14 + 12 }}
       onClick={() => onPick(node.path)}
     >
-      <span className="cl-docs-tree-twisty" aria-hidden>📄</span>
+      <span className="cl-docs-tree-twisty" aria-hidden><Document size={11} /></span>
       <span className="cl-docs-tree-name">{node.name}</span>
     </div>
   );

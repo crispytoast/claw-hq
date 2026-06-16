@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 import { usePageRpc } from "./usePageRpc.js";
+import { Tools } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -40,7 +41,7 @@ export function McpsPage({ client, status }: Props) {
       {loading && <div className="empty"><div className="spinner" />Loading…</div>}
       {error && <div className="alert error">{error}</div>}
       {!loading && !error && grouped.length === 0 && (
-        <div className="empty"><div className="big">🛠️</div>No tools cataloged.</div>
+        <div className="empty"><div className="big"><Tools size={28} /></div>No tools cataloged.</div>
       )}
       <div className="mcp-groups">
         {grouped.map((g) => (

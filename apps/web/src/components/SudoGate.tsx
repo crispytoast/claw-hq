@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { Lock, Warning } from "./icons.js";
 
 /**
  * In-app sudo prompt for operator.admin-scoped operations. This is a defense
@@ -143,7 +144,7 @@ export function SudoGate() {
   return (
     <div className="sudo-backdrop" onClick={cancel}>
       <div className="sudo-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="sudo-modal-icon">{pending.danger ? "⚠️" : "🔒"}</div>
+        <div className="sudo-modal-icon">{pending.danger ? <Warning size={22} /> : <Lock size={22} />}</div>
         <div className="sudo-modal-title">{pending.title}</div>
         <div className="sudo-modal-body">{pending.body}</div>
         <label className="sudo-modal-remember">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 import { usePageRpc } from "./usePageRpc.js";
+import { Tools } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -118,7 +119,7 @@ export function SkillsPage({ client, status }: Props) {
       {loading && <div className="empty"><div className="spinner" />Loading…</div>}
       {error && <div className="alert error">{error}</div>}
       {!loading && !error && skills.length === 0 && (
-        <div className="empty"><div className="big">🧠</div>No skills found.</div>
+        <div className="empty"><div className="big"><Tools size={28} /></div>No skills found.</div>
       )}
       <ul className="page-list">
         {skills.map((s, i) => {

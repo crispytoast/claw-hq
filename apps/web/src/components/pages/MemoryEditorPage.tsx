@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { PageShell } from "./PageShell.js";
+import { Brain, Plus } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -221,7 +222,7 @@ export function MemoryEditorPage({ client, status, projectSlug }: Props) {
               setActiveName(NEW_FILE_SENTINEL);
             }}
           >
-            <span>＋</span>
+            <Plus size={12} />
             <span>New memory file</span>
           </button>
           {creating && (
@@ -281,7 +282,7 @@ export function MemoryEditorPage({ client, status, projectSlug }: Props) {
         <div className="memory-pane">
           {!activeName || activeName === NEW_FILE_SENTINEL ? (
             <div className="empty">
-              <div className="big">🧠</div>
+              <div className="big"><Brain size={28} /></div>
               {creating ? "Pick a filename and press Create." : "Pick a memory file to view or edit."}
             </div>
           ) : (

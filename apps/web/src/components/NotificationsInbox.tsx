@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { systemApi, type NotificationItem } from "../system-api.js";
+import { Bell } from "./icons.js";
 
 interface Props {
   onClose(): void;
@@ -80,7 +81,7 @@ export function NotificationsInbox({ onClose, onOpenDeepLink }: Props) {
         {error && <div className="alert error">{error}</div>}
 
         {!loading && items.length === 0 && (
-          <div className="empty"><div className="big">🔔</div>No notifications yet.</div>
+          <div className="empty"><div className="big"><Bell size={28} /></div>No notifications yet.</div>
         )}
 
         <ul className="notif-list">

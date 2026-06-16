@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
+import { Brain, Document } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -208,7 +209,7 @@ export function WorkspaceMemoryPage({ client, status }: Props) {
                 className={`cl-memory-row${activeKey === LONG_TERM_SENTINEL ? " is-active" : ""}`}
                 onClick={() => setActiveKey(LONG_TERM_SENTINEL)}
               >
-                <span className="cl-memory-row-icon">🧠</span>
+                <span className="cl-memory-row-icon"><Brain size={13} /></span>
                 <span className="cl-memory-row-label">MEMORY.md</span>
                 {longTermMissing && <span className="cl-memory-row-meta">empty</span>}
               </div>
@@ -229,7 +230,7 @@ export function WorkspaceMemoryPage({ client, status }: Props) {
                         className={`cl-memory-row${activeKey === e.file.name ? " is-active" : ""}`}
                         onClick={() => setActiveKey(e.file.name)}
                       >
-                        <span className="cl-memory-row-icon">📅</span>
+                        <span className="cl-memory-row-icon"><Document size={13} /></span>
                         <span className="cl-memory-row-label">
                           {formatDate(e.date)}
                           <span className="cl-memory-row-date">{e.date}</span>
@@ -250,7 +251,7 @@ export function WorkspaceMemoryPage({ client, status }: Props) {
                     className={`cl-memory-row${activeKey === f.name ? " is-active" : ""}`}
                     onClick={() => setActiveKey(f.name)}
                   >
-                    <span className="cl-memory-row-icon">📄</span>
+                    <span className="cl-memory-row-icon"><Document size={13} /></span>
                     <span className="cl-memory-row-label">{f.name}</span>
                   </div>
                 ))}

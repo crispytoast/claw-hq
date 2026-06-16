@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { systemApi, type OpenClawStatus } from "../system-api.js";
+import { Check, X } from "./icons.js";
 
 interface Props {
   onSkip(): void;
@@ -106,7 +107,7 @@ function CopyableCommand({ command }: { command: string }) {
             window.prompt("Copy:", command);
           }
         }}
-      >{copied ? "Copied ✓" : "Copy"}</button>
+      >{copied ? <>Copied <Check size={12} style={{ verticalAlign: "-2px" }} /></> : "Copy"}</button>
     </div>
   );
 }
@@ -236,8 +237,12 @@ export function OpenClawInstallWizard({ onSkip, onReady }: Props) {
             <span><span className="spinner" /> Checking…</span>
           ) : status ? (
             <span>
-              {status.installed ? "✓ installed" : "✗ not installed"}
-              {status.installed && (status.reachable ? "  ·  ✓ gateway reachable" : "  ·  gateway not reachable")}
+              {status.installed
+                ? <><Check size={12} style={{ verticalAlign: "-2px" }} /> installed</>
+                : <><X size={12} style={{ verticalAlign: "-2px" }} /> not installed</>}
+              {status.installed && (status.reachable
+                ? <>  ·  <Check size={12} style={{ verticalAlign: "-2px" }} /> gateway reachable</>
+                : "  ·  gateway not reachable")}
             </span>
           ) : err ? (
             <span className="install-err">{err}</span>

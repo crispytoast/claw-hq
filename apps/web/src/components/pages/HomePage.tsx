@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import type { SidebarPage } from "../Sidebar.js";
 import { PageShell } from "./PageShell.js";
+import { Folder, Leaf, Check, Books, Document, Chat } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -219,7 +220,7 @@ export function HomePage({ client, status, onSelectPage }: Props) {
       {
         key: "projects",
         label: "Projects",
-        icon: "🗂️",
+        icon: <Folder size={20} />,
         value: stats.projects.total,
         sub: stats.projects.loading ? "…" : "in workspace",
         error: stats.projects.error,
@@ -233,7 +234,7 @@ export function HomePage({ client, status, onSelectPage }: Props) {
       {
         key: "subprojects",
         label: "Subprojects",
-        icon: "🌿",
+        icon: <Leaf size={20} />,
         value: stats.subprojects.active,
         sub: stats.subprojects.loading ? "…" : `${stats.subprojects.total} total`,
         error: stats.subprojects.error,
@@ -242,7 +243,7 @@ export function HomePage({ client, status, onSelectPage }: Props) {
       {
         key: "tasks",
         label: "Open tasks",
-        icon: "✅",
+        icon: <Check size={20} />,
         value: stats.tasks.open,
         sub: stats.tasks.loading
           ? "…"
@@ -253,7 +254,7 @@ export function HomePage({ client, status, onSelectPage }: Props) {
       {
         key: "docs",
         label: "Docs",
-        icon: "📚",
+        icon: <Books size={20} />,
         value: stats.docs.total,
         sub: stats.docs.loading ? "…" : "markdown files",
         error: stats.docs.error,
@@ -262,7 +263,7 @@ export function HomePage({ client, status, onSelectPage }: Props) {
       {
         key: "memory",
         label: "Memory",
-        icon: "📅",
+        icon: <Document size={20} />,
         value: stats.memory.total,
         sub: stats.memory.loading ? "…" : "workspace files",
         error: stats.memory.error,
@@ -271,7 +272,7 @@ export function HomePage({ client, status, onSelectPage }: Props) {
       {
         key: "chats",
         label: "Chats",
-        icon: "💬",
+        icon: <Chat size={20} />,
         value: stats.chats.total,
         sub: stats.chats.loading ? "…" : "saved sessions",
         error: stats.chats.error,

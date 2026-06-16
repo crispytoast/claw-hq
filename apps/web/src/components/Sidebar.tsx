@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SessionSummary } from "./ChatApp.js";
 import type { User } from "../api.js";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
+import {
+  Home, Leaf, Check, Books, Brain, Tools, Models, Hand, Clock, Phone,
+  Settings, Stethoscope, Plug, Chat, Plus, Clipboard, Chevron, Kebab, X, Folder,
+} from "./icons.js";
 
 export type SidebarPage =
   | "chat"
@@ -26,29 +30,29 @@ export type SidebarPage =
 interface NavItem {
   id: Exclude<SidebarPage, "chat">;
   label: string;
-  icon: string;
+  icon: React.ReactNode;
   dot?: "amber" | "green";
 }
 
 // Order mirrors OHQ's static nav: live surfaces first, ops/debug last,
 // Settings always at the bottom. "Sessions" lives in the expandable group above.
 const STATIC_NAV: NavItem[] = [
-  { id: "home",        label: "Home",        icon: "🏠" },
-  { id: "subprojects", label: "Subprojects", icon: "🌿" },
-  { id: "tasks",       label: "Tasks",       icon: "✅" },
-  { id: "docs",        label: "Docs",        icon: "📚" },
-  { id: "memory",      label: "Memory",      icon: "📅" },
-  { id: "channels",    label: "Channels",    icon: "📡" },
-  { id: "mcps",        label: "MCPs",        icon: "🛠️" },
-  { id: "skills",      label: "Skills",      icon: "🧠" },
-  { id: "models",      label: "Models",      icon: "🧮" },
-  { id: "approvals",   label: "Approvals",   icon: "✋" },
-  { id: "cron",        label: "Cron",        icon: "⏰" },
-  { id: "nodes",       label: "Nodes",       icon: "📱" },
-  { id: "config",      label: "Config",      icon: "⚙️" },
-  { id: "doctor",      label: "Doctor",      icon: "🩺" },
-  { id: "rpc",         label: "RPC",         icon: "🔌" },
-  { id: "settings",    label: "Settings",    icon: "⚙️" },
+  { id: "home",        label: "Home",        icon: <Home /> },
+  { id: "subprojects", label: "Subprojects", icon: <Leaf /> },
+  { id: "tasks",       label: "Tasks",       icon: <Check /> },
+  { id: "docs",        label: "Docs",        icon: <Books /> },
+  { id: "memory",      label: "Memory",      icon: <Brain /> },
+  { id: "channels",    label: "Channels",    icon: <Chat /> },
+  { id: "mcps",        label: "MCPs",        icon: <Plug /> },
+  { id: "skills",      label: "Skills",      icon: <Tools /> },
+  { id: "models",      label: "Models",      icon: <Models /> },
+  { id: "approvals",   label: "Approvals",   icon: <Hand /> },
+  { id: "cron",        label: "Cron",        icon: <Clock /> },
+  { id: "nodes",       label: "Nodes",       icon: <Phone /> },
+  { id: "config",      label: "Config",      icon: <Settings /> },
+  { id: "doctor",      label: "Doctor",      icon: <Stethoscope /> },
+  { id: "rpc",         label: "RPC",         icon: <Plug /> },
+  { id: "settings",    label: "Settings",    icon: <Settings /> },
 ];
 
 interface ProjectSummary {
@@ -504,9 +508,9 @@ export function Sidebar({
             type="button"
             className="menu"
             aria-label="More"
-            style={{ marginLeft: "auto", color: "var(--muted-foreground)", padding: "2px 8px", fontSize: "1.1rem" }}
+            style={{ marginLeft: "auto", color: "var(--muted-foreground)", padding: "4px 6px", display: "inline-flex", alignItems: "center" }}
             onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
-          >⋯</button>
+          ><Kebab size={16} /></button>
           {menuOpen && (
             <div className="menu-popover" style={{ top: 48, right: 12, left: "auto" }}>
               {onShowPairedDevices && (
@@ -531,9 +535,9 @@ export function Sidebar({
               onClick={() => setSessionsOpen((v) => !v)}
               aria-expanded={sessionsOpen}
             >
-              <span className="cl-group-icon">💬</span>
+              <span className="cl-group-icon"><Chat /></span>
               <span>Sessions</span>
-              <span className="cl-group-chevron">{sessionsOpen ? "▾" : "▸"}</span>
+              <span className="cl-group-chevron"><Chevron dir={sessionsOpen ? "down" : "right"} size={12} /></span>
             </button>
 
             <div className={`cl-group-body ${sessionsOpen ? "cl-expanded" : ""}`}>
@@ -552,7 +556,7 @@ export function Sidebar({
                       className="cl-search-clear"
                       aria-label="Clear search"
                       onClick={() => setSearchInput("")}
-                    >✕</button>
+                    ><X size={12} /></button>
                   )}
                 </div>
 
@@ -614,7 +618,7 @@ export function Sidebar({
                       onClick={() => pick("sessions")}
                       title="Browse all sessions"
                     >
-                      <span>＋</span>
+                      <Plus size={12} />
                       <span>All sessions</span>
                     </button>
 
@@ -694,9 +698,9 @@ export function Sidebar({
               onClick={() => setProjectsOpen((v) => !v)}
               aria-expanded={projectsOpen}
             >
-              <span className="cl-group-icon">📁</span>
+              <span className="cl-group-icon"><Folder /></span>
               <span>Projects</span>
-              <span className="cl-group-chevron">{projectsOpen ? "▾" : "▸"}</span>
+              <span className="cl-group-chevron"><Chevron dir={projectsOpen ? "down" : "right"} size={12} /></span>
             </button>
             <div className={`cl-group-body ${projectsOpen ? "cl-expanded" : ""}`}>
               <div className="cl-group-inner">
@@ -707,7 +711,9 @@ export function Sidebar({
                   onClick={() => { onPickWorkspaceMemory(); onMobileClose(); }}
                 >
                   <div className="cl-row-main">
-                    <span className="cl-row-title">🧠 Workspace memory</span>
+                    <span className="cl-row-title" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <Brain /> Workspace memory
+                    </span>
                   </div>
                 </button>
                 {projectsLoading && projects === null ? (
@@ -732,7 +738,7 @@ export function Sidebar({
                           >
                             <div className="cl-row-main">
                               <span className="cl-row-title">
-                                <span className="cl-project-chevron">{isExpanded ? "▾" : "▸"}</span>
+                                <span className="cl-project-chevron"><Chevron dir={isExpanded ? "down" : "right"} size={12} /></span>
                                 {p.name}
                               </span>
                             </div>
@@ -758,7 +764,7 @@ export function Sidebar({
                               onPickProject(p.id);
                               onMobileClose();
                             }}
-                          >📋</button>
+                          ><Clipboard size={13} /></button>
                           <button
                             type="button"
                             className="cl-project-memory"
@@ -769,7 +775,7 @@ export function Sidebar({
                               onPickProjectMemory(p.id);
                               onMobileClose();
                             }}
-                          >🧠</button>
+                          ><Brain size={13} /></button>
                           {isExpanded && (
                             <div className="cl-project-chats">
                               <button
@@ -777,7 +783,7 @@ export function Sidebar({
                                 className="cl-new-btn"
                                 onClick={() => void createProjectChat(p.id)}
                               >
-                                <span>＋</span>
+                                <Plus size={12} />
                                 <span>New chat</span>
                               </button>
                               {chatsLoading && !chats ? (
@@ -839,7 +845,7 @@ export function Sidebar({
                                             e.stopPropagation();
                                             setActionsOpenForChat((curr) => (curr === c.id ? null : c.id));
                                           }}
-                                        >⋮</button>
+                                        ><Kebab size={13} /></button>
                                       )}
                                       {isActionsOpen && !isRenaming && (
                                         <div

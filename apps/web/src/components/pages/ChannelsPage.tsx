@@ -1,6 +1,7 @@
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 import { usePageRpc } from "./usePageRpc.js";
+import { Chat } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -41,7 +42,7 @@ export function ChannelsPage({ client, status }: Props) {
       {loading && <div className="empty"><div className="spinner" />Loading…</div>}
       {error && <div className="alert error">{error}</div>}
       {!loading && !error && channels.length === 0 && (
-        <div className="empty"><div className="big">📡</div>No channels reported by OpenClaw.</div>
+        <div className="empty"><div className="big"><Chat size={28} /></div>No channels reported by OpenClaw.</div>
       )}
       <ul className="page-list">
         {channels.map((c, i) => (

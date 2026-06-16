@@ -5,6 +5,7 @@ import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { ChatPane } from "./ChatPane.js";
 import { ChatDetailView } from "./ChatDetailView.js";
 import { SystemHealth } from "./SystemHealth.js";
+import { Bell, Menu, Hourglass } from "./icons.js";
 import { ProjectPage } from "./pages/ProjectPage.js";
 import { MemoryEditorPage } from "./pages/MemoryEditorPage.js";
 import { SubprojectsPage } from "./pages/SubprojectsPage.js";
@@ -359,7 +360,7 @@ export function ChatApp({ user, onLogout }: Props) {
         onClick={() => setShowInbox(true)}
         title={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"}
       >
-        🔔
+        <Bell size={15} />
         {unreadCount > 0 && <span className="bell-dot" aria-hidden="true" />}
       </button>
       <span
@@ -412,7 +413,7 @@ export function ChatApp({ user, onLogout }: Props) {
             className="cl-hamburger"
             aria-label="Open menu"
             onClick={() => setMobileOpen(true)}
-          >☰</button>
+          ><Menu size={16} /></button>
           <div className="page-toolbar-title">
             {page === "chat"
               ? (activeProjectSlug
@@ -472,10 +473,10 @@ export function ChatApp({ user, onLogout }: Props) {
                 status={status}
               />
             ) : (
-              <div className="empty"><div className="big">⏳</div>Waiting for session…</div>
+              <div className="empty"><div className="big"><Hourglass size={28} /></div>Waiting for session…</div>
             )
           ) : (
-            <div className="empty"><div className="big">⏳</div>Waiting for session…</div>
+            <div className="empty"><div className="big"><Hourglass size={28} /></div>Waiting for session…</div>
           )
         )}
         {page === "sessions" && (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../../gateway.js";
 import { PageShell } from "./PageShell.js";
 import { requireSudo } from "../SudoGate.js";
+import { Phone, Pencil } from "../icons.js";
 
 interface Props {
   client: GatewayClient | null;
@@ -290,7 +291,7 @@ export function NodesPage({ client, status }: Props) {
       {err && <div className="alert error">node.list failed: {err}</div>}
       {loading && nodes === null && <div className="empty"><div className="spinner" />Loading…</div>}
       {nodes && nodes.length === 0 && !loading && !err && (
-        <div className="empty"><div className="big">📱</div>No nodes paired yet.</div>
+        <div className="empty"><div className="big"><Phone size={28} /></div>No nodes paired yet.</div>
       )}
       {nodes && nodes.length > 0 && (
         <ul className="page-list">
@@ -325,7 +326,7 @@ export function NodesPage({ client, status }: Props) {
                           style={{ marginLeft: 6, fontSize: "0.7rem" }}
                           onClick={() => startRename(node)}
                           title="Rename"
-                        >✏️</button>
+                        ><Pencil size={13} /></button>
                       </>
                     )}
                   </div>
