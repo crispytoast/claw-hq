@@ -2099,7 +2099,12 @@ type InlinePart =
 
 type BlockPart =
   | { kind: "inline"; parts: InlinePart[] }
-  | { kind: "codeblock"; lang: string; text: string };
+  | { kind: "codeblock"; lang: string; text: string }
+  | { kind: "heading"; level: 1 | 2 | 3; parts: InlinePart[] }
+  | { kind: "hr" }
+  | { kind: "blockquote"; parts: InlinePart[] }
+  | { kind: "ul"; items: InlinePart[][] }
+  | { kind: "ol"; items: InlinePart[][] };
 
 // Tokenize a single line/segment into inline parts (text + code + bold + italic
 // + links). Markers are non-greedy, single-line (newlines break out of bold /
@@ -2132,24 +2137,71 @@ function parseInline(text: string): InlinePart[] {
   return out;
 }
 
+// Classify a paragraph-sized chunk (no fenced code, no blank lines inside) as
+// one of the block-level markdown shapes. Defaults to inline-parsed paragraph.
+function classifyParagraph(chunk: string): BlockPart {
+  const lines = chunk.split("\n");
+  const first = lines[0] ?? "";
+
+  // Headings — `# heading` / `## heading` / `### heading`. Multi-line headings
+  // are not supported (the model rarely emits them); we accept only the first
+  // line and ignore trailing content.
+  const headingMatch = first.match(/^(#{1,3})\s+(.+?)\s*#*$/);
+  if (headingMatch && lines.length === 1) {
+    const level = headingMatch[1]!.length as 1 | 2 | 3;
+    return { kind: "heading", level, parts: parseInline(headingMatch[2]!) };
+  }
+
+  // Horizontal rule — `---` / `***` / `___` (3+) on a single line.
+  if (lines.length === 1 && /^([-*_])\1{2,}\s*$/.test(first)) {
+    return { kind: "hr" };
+  }
+
+  // Blockquote — every non-empty line starts with `> `.
+  if (lines.every((l) => l.trim() === "" || l.startsWith("> "))) {
+    const body = lines.map((l) => l.replace(/^>\s?/, "")).join("\n");
+    return { kind: "blockquote", parts: parseInline(body) };
+  }
+
+  // Unordered list — every line starts with `- ` or `* `.
+  if (lines.every((l) => /^[-*]\s+/.test(l))) {
+    const items = lines.map((l) => parseInline(l.replace(/^[-*]\s+/, "")));
+    return { kind: "ul", items };
+  }
+
+  // Ordered list — every line starts with `N. ` or `N) `.
+  if (lines.every((l) => /^\d+[.)]\s+/.test(l))) {
+    const items = lines.map((l) => parseInline(l.replace(/^\d+[.)]\s+/, "")));
+    return { kind: "ol", items };
+  }
+
+  return { kind: "inline", parts: parseInline(chunk) };
+}
+
 // Split text into fenced code blocks vs inline-parsed segments. Fences are
-// matched non-greedy with ```[lang]\n...\n```. Anything outside fences flows
-// through parseInline; everything inside the fence renders as a <pre><code>.
+// matched non-greedy with ```[lang]\n...\n```. Outside fences, paragraphs
+// (split on blank lines) get classified into heading / hr / blockquote /
+// list / inline paragraph shapes.
 function parseBlocks(text: string): BlockPart[] {
   const out: BlockPart[] = [];
   const re = /```([A-Za-z0-9_+-]*)\n?([\s\S]*?)```/g;
   let last = 0;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) {
-      out.push({ kind: "inline", parts: parseInline(text.slice(last, m.index)) });
+  const pushNonFence = (segment: string) => {
+    if (!segment) return;
+    const paragraphs = segment.split(/\n{2,}/);
+    for (const p of paragraphs) {
+      const trimmed = p.replace(/\n+$/, "");
+      if (!trimmed) continue;
+      out.push(classifyParagraph(trimmed));
     }
+  };
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) pushNonFence(text.slice(last, m.index));
     out.push({ kind: "codeblock", lang: m[1] ?? "", text: m[2] ?? "" });
     last = m.index + m[0].length;
   }
-  if (last < text.length) {
-    out.push({ kind: "inline", parts: parseInline(text.slice(last)) });
-  }
+  if (last < text.length) pushNonFence(text.slice(last));
   return out;
 }
 
@@ -2160,6 +2212,34 @@ function parseBlocks(text: string): BlockPart[] {
  * a reload. Optionally highlights case-insensitive matches of `highlight` with
  * `<mark>`.
  */
+function renderInlinePart(p: InlinePart, i: number, highlight?: string): React.ReactNode {
+  if (p.kind === "text") return <span key={i}>{highlightText(p.text, highlight)}</span>;
+  if (p.kind === "code")
+    return <code key={i} className="bubble-inline-code">{highlightText(p.text, highlight)}</code>;
+  if (p.kind === "bold") return <strong key={i}>{highlightText(p.text, highlight)}</strong>;
+  if (p.kind === "italic") return <em key={i}>{highlightText(p.text, highlight)}</em>;
+  const url = p.url;
+  const isImage = isInlineImageUrl(url);
+  return (
+    <span key={i} className={isImage ? "bubble-link-image-wrap" : undefined}>
+      {isImage && (
+        <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
+          <img
+            src={url}
+            alt={p.text}
+            className="bubble-image-thumb"
+            loading="lazy"
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        </a>
+      )}
+      <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-link">
+        {highlightText(p.text, highlight)}
+      </a>
+    </span>
+  );
+}
+
 function BubbleContent({ text, highlight }: { text: string; highlight?: string }) {
   const blocks = useMemo(() => parseBlocks(text), [text]);
   return (
@@ -2172,44 +2252,35 @@ function BubbleContent({ text, highlight }: { text: string; highlight?: string }
             </pre>
           );
         }
+        if (b.kind === "heading") {
+          const inner = b.parts.map((p, i) => renderInlinePart(p, i, highlight));
+          if (b.level === 1) return <h1 key={bi}>{inner}</h1>;
+          if (b.level === 2) return <h2 key={bi}>{inner}</h2>;
+          return <h3 key={bi}>{inner}</h3>;
+        }
+        if (b.kind === "hr") return <hr key={bi} />;
+        if (b.kind === "blockquote") {
+          return (
+            <blockquote key={bi}>
+              {b.parts.map((p, i) => renderInlinePart(p, i, highlight))}
+            </blockquote>
+          );
+        }
+        if (b.kind === "ul" || b.kind === "ol") {
+          const Tag = b.kind === "ul" ? "ul" : "ol";
+          return (
+            <Tag key={bi}>
+              {b.items.map((item, ii) => (
+                <li key={ii}>
+                  {item.map((p, pi) => renderInlinePart(p, pi, highlight))}
+                </li>
+              ))}
+            </Tag>
+          );
+        }
         return (
           <span key={bi}>
-            {b.parts.map((p, i) => {
-              if (p.kind === "text") {
-                return <span key={i}>{highlightText(p.text, highlight)}</span>;
-              }
-              if (p.kind === "code") {
-                return <code key={i} className="bubble-inline-code">{highlightText(p.text, highlight)}</code>;
-              }
-              if (p.kind === "bold") {
-                return <strong key={i}>{highlightText(p.text, highlight)}</strong>;
-              }
-              if (p.kind === "italic") {
-                return <em key={i}>{highlightText(p.text, highlight)}</em>;
-              }
-              const url = p.url;
-              const isImage = isInlineImageUrl(url);
-              return (
-                <span key={i} className={isImage ? "bubble-link-image-wrap" : undefined}>
-                  {isImage && (
-                    <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
-                      <img
-                        src={url}
-                        alt={p.text}
-                        className="bubble-image-thumb"
-                        loading="lazy"
-                        onError={(e) => {
-                          e.currentTarget.style.display = "none";
-                        }}
-                      />
-                    </a>
-                  )}
-                  <a href={url} target="_blank" rel="noopener noreferrer" className="bubble-link">
-                    {highlightText(p.text, highlight)}
-                  </a>
-                </span>
-              );
-            })}
+            {b.parts.map((p, i) => renderInlinePart(p, i, highlight))}
           </span>
         );
       })}
