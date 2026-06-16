@@ -14,6 +14,7 @@ import {
 import { toggleTask } from "./tasks.js";
 import {
   deleteMemoryFile,
+  getLongTermMemory,
   getMemoryFile,
   listMemoryFiles,
   putMemoryFile,
@@ -27,7 +28,7 @@ import {
 import { getDoc, listDocs, searchDocs } from "./docs.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.14";
+const PLUGIN_VERSION = "0.0.15";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -407,6 +408,7 @@ export default definePluginEntry({
             "clawhq.memory.get",
             "clawhq.memory.put",
             "clawhq.memory.delete",
+            "clawhq.memory.longTerm",
             "clawhq.plugins.list",
             "clawhq.plugins.search",
             "clawhq.plugins.install",
@@ -1134,6 +1136,33 @@ export default definePluginEntry({
         }
       },
       { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.memory.longTerm",
+      async ({ respond }) => {
+        try {
+          if (!workspaceRoot) {
+            respond(false, undefined, {
+              code: "PRECONDITION",
+              message: "workspaceRoot not configured",
+            });
+            return;
+          }
+          const file = await getLongTermMemory({ workspaceRoot });
+          if (!file) {
+            respond(true, { exists: false });
+            return;
+          }
+          respond(true, { exists: true, file });
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.read" },
     );
 
     // --- docs: workspace-wide markdown browser + search ---

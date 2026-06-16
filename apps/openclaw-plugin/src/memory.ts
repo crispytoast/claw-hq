@@ -175,6 +175,33 @@ export async function putMemoryFile(input: {
   });
 }
 
+/**
+ * Read the workspace's long-term memory file at `<workspaceRoot>/MEMORY.md`.
+ * This lives at the workspace root (not under `memory/`) by long-standing
+ * convention — OHQ surfaces it as the "long-term memory" reference distinct
+ * from the daily rollups in `memory/YYYY-MM-DD.md`.
+ *
+ * Read-only: writes still go through the per-file `putMemoryFile` path; this
+ * is a viewer-side helper only.
+ */
+export async function getLongTermMemory(input: {
+  workspaceRoot: string;
+}): Promise<{ content: string; size: number; updatedMs: number } | null> {
+  const root = path.resolve(input.workspaceRoot);
+  const filePath = path.resolve(path.join(root, "MEMORY.md"));
+  // Defense-in-depth: refuse anything that escapes the workspace root.
+  if (filePath !== root && !filePath.startsWith(root + path.sep)) return null;
+  try {
+    const [content, stat] = await Promise.all([
+      fs.readFile(filePath, "utf8"),
+      fs.stat(filePath),
+    ]);
+    return { content, size: stat.size, updatedMs: stat.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
 export async function deleteMemoryFile(input: {
   workspaceRoot: string;
   projectSlug: string | null;
