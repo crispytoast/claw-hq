@@ -310,12 +310,90 @@ export function ChatApp({ user, onLogout }: Props) {
 
   const pill = useMemo(() => statusPill(status), [status]);
 
+  // ------------------------------------------------------------------
+  // Infinite back stack — every screen-changing state update pushes a
+  // snapshot to window.history. Android's back button (MainActivity
+  // wv.canGoBack/goBack) and the browser's back gesture both fire
+  // popstate, which restores the previous snapshot. When the stack is
+  // exhausted, native super.onBackPressed() closes the app.
+  //
+  // Watched fields are nav-level only: drawer state (mobileOpen), chat
+  // title (changes mid-stream), search query, settings sub-tab are all
+  // ephemeral and don't push.
+  // ------------------------------------------------------------------
+  const skipNextPushRef = useRef(true);
+  const suppressPushRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const snap = {
+      page,
+      activeKey,
+      activeChatId,
+      activeChatProject,
+      activeProjectSlug,
+      activeProjectSub,
+      activeMemoryProject,
+      activeWorkspaceMemory,
+      showSettings,
+      showInbox,
+    };
+    if (skipNextPushRef.current) {
+      skipNextPushRef.current = false;
+      try { window.history.replaceState(snap, ""); } catch { /* noop */ }
+    } else if (suppressPushRef.current) {
+      // This state change came from a popstate event — don't push again.
+      suppressPushRef.current = false;
+    } else {
+      try { window.history.pushState(snap, ""); } catch { /* noop */ }
+    }
+  }, [
+    page, activeKey, activeChatId, activeChatProject,
+    activeProjectSlug, activeProjectSub,
+    activeMemoryProject, activeWorkspaceMemory,
+    showSettings, showInbox,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (e: PopStateEvent) => {
+      const s = e.state as null | {
+        page: PageKey;
+        activeKey: string | null;
+        activeChatId: string | null;
+        activeChatProject: string | null;
+        activeProjectSlug: string | null;
+        activeProjectSub: string | null;
+        activeMemoryProject: string | null;
+        activeWorkspaceMemory: boolean;
+        showSettings: boolean;
+        showInbox: boolean;
+      };
+      if (!s || typeof s.page !== "string") return;
+      suppressPushRef.current = true;
+      setPage(s.page);
+      setActiveKey(s.activeKey);
+      setActiveChatId(s.activeChatId);
+      setActiveChatProject(s.activeChatProject);
+      setActiveProjectSlug(s.activeProjectSlug);
+      setActiveProjectSub(s.activeProjectSub);
+      setActiveMemoryProject(s.activeMemoryProject);
+      setActiveWorkspaceMemory(s.activeWorkspaceMemory);
+      setShowSettings(s.showSettings);
+      setShowInbox(s.showInbox);
+      // Drawer always closes on a back nav so it doesn't linger over the
+      // restored screen.
+      setMobileOpen(false);
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, []);
+
   if (showSettings) {
     return (
       <>
         <Settings
           user={user}
-          onClose={() => setShowSettings(false)}
+          onClose={() => window.history.back()}
           initialTab={settingsTab}
           client={clientRef.current}
           status={status}
@@ -330,16 +408,19 @@ export function ChatApp({ user, onLogout }: Props) {
       <>
         <NotificationsInbox
           onClose={() => {
-            setShowInbox(false);
+            window.history.back();
             // Refresh badge after the user dismisses (they may have marked stuff read).
             void systemApi.notifications(1).then((l) => setUnreadCount(l.unread)).catch(() => {});
           }}
           onOpenDeepLink={(link) => {
-            // /chat/<sessionKey> deep links jump to that session.
+            // /chat/<sessionKey> deep links jump to that session. Use back()
+            // first so the inbox doesn't sit in the history stack — the chat
+            // selection then pushes a fresh entry.
             const m = link.match(/^\/chat\/(.+)$/);
             if (m) {
-              setActiveKey(m[1] ?? null);
-              setShowInbox(false);
+              window.history.back();
+              // Defer so popstate has settled before we push the new selection.
+              setTimeout(() => setActiveKey(m[1] ?? null), 0);
             }
           }}
         />
