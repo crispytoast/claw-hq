@@ -2425,7 +2425,6 @@ a:hover { text-decoration: underline; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cl-docs-tree-dir .cl-doc-tree-name,
 .cl-docs-tree-dir {
   font-weight: 500;
 }

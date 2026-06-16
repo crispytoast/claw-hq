@@ -126,12 +126,12 @@ function TreeRow({ node, depth, activePath, expanded, onToggle, onPick }: TreeRo
     return (
       <>
         <div
-          className="cl-doc-tree-row cl-doc-tree-dir"
+          className="cl-docs-tree-row cl-docs-tree-dir"
           style={{ paddingLeft: depth * 14 + 12 }}
           onClick={() => onToggle(node.path)}
         >
-          <span className="cl-doc-tree-twisty">{isOpen ? "▾" : "▸"}</span>
-          <span className="cl-doc-tree-name">{node.name || "/"}</span>
+          <span className="cl-docs-tree-twisty">{isOpen ? "▾" : "▸"}</span>
+          <span className="cl-docs-tree-name">{node.name || "/"}</span>
         </div>
         {isOpen &&
           node.children.map((c) => (
@@ -151,12 +151,12 @@ function TreeRow({ node, depth, activePath, expanded, onToggle, onPick }: TreeRo
   const active = activePath === node.path;
   return (
     <div
-      className={`cl-doc-tree-row cl-doc-tree-file${active ? " is-active" : ""}`}
+      className={`cl-docs-tree-row cl-docs-tree-file${active ? " is-active" : ""}`}
       style={{ paddingLeft: depth * 14 + 12 }}
       onClick={() => onPick(node.path)}
     >
-      <span className="cl-doc-tree-twisty" aria-hidden>📄</span>
-      <span className="cl-doc-tree-name">{node.name}</span>
+      <span className="cl-docs-tree-twisty" aria-hidden>📄</span>
+      <span className="cl-docs-tree-name">{node.name}</span>
     </div>
   );
 }
