@@ -844,6 +844,56 @@ a:hover { text-decoration: underline; }
 .status-dot-only.warn { background: var(--accent); }
 .status-dot-only.bad { background: #dc5a5a; box-shadow: 0 0 6px rgba(220, 90, 90, 0.5); }
 
+/* Page toolbar title — muted weight matching OHQ. */
+.page-toolbar-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* PC vitals strip — ported from OHQ SystemHealth. tabular-nums keeps the
+   width stable so values don't dance every 2 s tick. */
+.sys-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  user-select: none;
+  white-space: nowrap;
+}
+.sys-health-loading {
+  width: 30px;
+  height: 13px;
+  opacity: 0.3;
+}
+.sys-health-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.sys-health-metric svg { flex-shrink: 0; opacity: 0.7; }
+.sys-health-sep { opacity: 0.4; }
+
+/* On narrow screens the strip becomes the dominant horizontal element, so
+   drop the separators to claim back space without sacrificing legibility. */
+@media (max-width: 720px) {
+  .sys-health { gap: 0.3rem; font-size: 10.5px; }
+  .sys-health-sep { display: none; }
+  .sys-health-metric { gap: 0.15rem; }
+}
+@media (max-width: 480px) {
+  /* On very narrow screens (Frank's phone in portrait), drop temps to keep
+     four metric chips visible — CPU%, GPU%, RAM%, Disk%. */
+  .sys-health-metric:nth-of-type(2),
+  .sys-health-metric:nth-of-type(4) { display: none; }
+}
+
 .empty {
   text-align: center;
   color: var(--text-dim);

@@ -7,14 +7,18 @@
  * version-check endpoint, which the user explicitly triggers.
  */
 import type { FastifyInstance } from "fastify";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, promises as fsp, statfsSync } from "node:fs";
 import { resolve } from "node:path";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import type Database from "better-sqlite3";
 import { WebSocket } from "ws";
 import { resolveOwner } from "./auth.js";
 import type { ResolvedConfig } from "./config.js";
 import { discoverOpenClaw } from "./openclaw-discovery.js";
 import { CLAW_HQ_VERSION, DEFAULT_RELEASES_URL } from "./version.js";
+
+const execP = promisify(exec);
 
 // Re-export so existing imports keep working.
 export { CLAW_HQ_VERSION } from "./version.js";
@@ -59,8 +63,130 @@ function publicPushConfig(pc: PushConfig | null): { configured: boolean; project
   return { configured: true, projectId: pc.projectId, updatedAt: pc.updatedAt };
 }
 
+// ---------------- /api/system/health helpers (Linux /proc + nvidia-smi) ----------------
+// Ported from oswald-hq/src/app/api/system/health/route.ts. Strictly read-only —
+// no secrets surface here; the values are CPU/RAM/Disk/GPU utilization stats.
+
+type CpuSample = { total: number; idle: number };
+let prevCpuSample: CpuSample | null = null;
+
+function parseCpuLine(line: string): CpuSample {
+  const parts = line.trim().split(/\s+/).slice(1).map(Number);
+  // /proc/stat: user nice system idle iowait irq softirq steal guest guest_nice
+  const idle = (parts[3] ?? 0) + (parts[4] ?? 0);
+  const total = parts.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+  return { idle, total };
+}
+
+async function readCpuLine(): Promise<CpuSample | null> {
+  try {
+    const data = await fsp.readFile("/proc/stat", "utf8");
+    const line = data.split("\n").find((l) => l.startsWith("cpu "));
+    return line ? parseCpuLine(line) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cpuUsage(): Promise<number | null> {
+  const cur = await readCpuLine();
+  if (!cur) return null;
+  if (!prevCpuSample) {
+    prevCpuSample = cur;
+    await new Promise((r) => setTimeout(r, 120));
+    const cur2 = await readCpuLine();
+    if (!cur2) return null;
+    const dt = cur2.total - cur.total;
+    const di = cur2.idle - cur.idle;
+    prevCpuSample = cur2;
+    return dt > 0 ? Math.max(0, Math.min(100, Math.round(((dt - di) / dt) * 100))) : 0;
+  }
+  const dt = cur.total - prevCpuSample.total;
+  const di = cur.idle - prevCpuSample.idle;
+  prevCpuSample = cur;
+  if (dt <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round(((dt - di) / dt) * 100)));
+}
+
+async function cpuTemp(): Promise<number | null> {
+  try {
+    const dirs = await fsp.readdir("/sys/class/hwmon");
+    for (const d of dirs) {
+      try {
+        const name = (await fsp.readFile(`/sys/class/hwmon/${d}/name`, "utf8")).trim();
+        if (name !== "coretemp" && name !== "k10temp" && name !== "zenpower") continue;
+        const raw = (await fsp.readFile(`/sys/class/hwmon/${d}/temp1_input`, "utf8")).trim();
+        const c = Number(raw) / 1000;
+        return Number.isFinite(c) ? Math.round(c) : null;
+      } catch { /* try next */ }
+    }
+  } catch { /* hwmon unavailable */ }
+  return null;
+}
+
+async function memInfo(): Promise<{ used: number; total: number } | null> {
+  try {
+    const data = await fsp.readFile("/proc/meminfo", "utf8");
+    const grab = (k: string) => {
+      const m = data.match(new RegExp(`^${k}:\\s+(\\d+)\\s+kB`, "m"));
+      return m ? Number(m[1]) * 1024 : null;
+    };
+    const total = grab("MemTotal");
+    const avail = grab("MemAvailable");
+    if (total === null || avail === null) return null;
+    return { used: total - avail, total };
+  } catch {
+    return null;
+  }
+}
+
+interface GpuInfo { load: number; temp: number; vramUsed: number; vramTotal: number; }
+async function gpuInfo(): Promise<GpuInfo | null> {
+  try {
+    const { stdout } = await execP(
+      "nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total --format=csv,noheader,nounits",
+      { timeout: 1500 },
+    );
+    const first = stdout.split("\n").find((l) => l.trim().length > 0);
+    if (!first) return null;
+    const parts = first.split(",").map((s) => Number(s.trim()));
+    if (parts.length < 4 || parts.some((n) => !Number.isFinite(n))) return null;
+    const [load, temp, used, total] = parts as [number, number, number, number];
+    return { load, temp, vramUsed: used * 1024 * 1024, vramTotal: total * 1024 * 1024 };
+  } catch {
+    return null;
+  }
+}
+
+function diskInfo(): { used: number; total: number } | null {
+  try {
+    const s = statfsSync("/");
+    const total = Number(s.blocks) * Number(s.bsize);
+    const free = Number(s.bavail) * Number(s.bsize);
+    return { used: total - free, total };
+  } catch {
+    return null;
+  }
+}
+
 export async function registerSystemRoutes(fastify: FastifyInstance, deps: SystemDeps): Promise<void> {
   const { db, config } = deps;
+
+  // ---------------- /api/system/health — PC vitals strip ----------------
+  // Owner-gated since the Funnel URL is public. CPU/RAM/Disk/GPU stats aren't
+  // secrets but leaking them off-tailnet to anyone with the URL adds nothing.
+  fastify.get("/api/system/health", async (req, reply) => {
+    const owner = resolveOwner(req, config, db);
+    if (!owner) {
+      reply.code(401);
+      return { error: "not authenticated" };
+    }
+    const [cpu, cpuT, ram, gpu] = await Promise.all([
+      cpuUsage(), cpuTemp(), memInfo(), gpuInfo(),
+    ]);
+    const disk = diskInfo();
+    return { cpu: { usage: cpu, temp: cpuT }, ram, gpu, disk, ts: Date.now() };
+  });
 
   // ---------------- version + update check ----------------
   fastify.get("/api/system/version", async (_req) => {

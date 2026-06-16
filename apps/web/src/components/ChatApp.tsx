@@ -4,6 +4,7 @@ import { GatewayClient, defaultGatewayUrl, type ConnectionStatus } from "../gate
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { ChatPane } from "./ChatPane.js";
 import { ChatDetailView } from "./ChatDetailView.js";
+import { SystemHealth } from "./SystemHealth.js";
 import { ProjectPage } from "./pages/ProjectPage.js";
 import { MemoryEditorPage } from "./pages/MemoryEditorPage.js";
 import { SubprojectsPage } from "./pages/SubprojectsPage.js";
@@ -412,7 +413,7 @@ export function ChatApp({ user, onLogout }: Props) {
             aria-label="Open menu"
             onClick={() => setMobileOpen(true)}
           >☰</button>
-          <div style={{ flex: 1, minWidth: 0, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <div className="page-toolbar-title">
             {page === "chat"
               ? (activeProjectSlug
                   ? `${activeProjectSlug} · project`
@@ -425,6 +426,7 @@ export function ChatApp({ user, onLogout }: Props) {
                     : (activeSession?.label ?? "No session"))
               : null}
           </div>
+          <SystemHealth />
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>{toolbar}</div>
         </div>
 

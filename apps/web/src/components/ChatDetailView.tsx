@@ -1403,14 +1403,6 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
 
   return (
     <>
-      <div className="chat-subheader">
-        {chatTitle && <span className="chat-subheader-title" title={chatTitle}>{chatTitle}</span>}
-        {projectSlug && (
-          <span className="chat-subheader-chip" title={`Project context: ${projectSlug}`}>
-            {projectSlug}
-          </span>
-        )}
-      </div>
       <div
         className={`message-list ${dragOver ? "drag-over" : ""}`}
         ref={listRef}
