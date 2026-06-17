@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
+import { sessionScopePrefix, type ChatKind } from "./ChatApp.js";
 import { lineDiff, parseFileEditArgs, statsFor, toHunks } from "./diff.js";
 import type { DiffHunk, ParsedFileEdit } from "./diff.js";
 import { extractHistoryAttachments, type HistoryAttachment } from "./history-attachments.js";
@@ -81,6 +82,8 @@ interface Props {
   client: GatewayClient;
   chatId: string;
   projectSlug: string | null;
+  /** Scope of this chat (Phase 8.1). undefined = legacy "project" semantics. */
+  chatKind?: ChatKind;
   status: ConnectionStatus;
   onTitleChange?(chatId: string, title: string): void;
   /**
@@ -292,10 +295,15 @@ function formatBubbleTimestamp(ms: number): string {
   return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${time}`;
 }
 
-function sessionKeyFor(chatId: string): string {
+function sessionKeyFor(
+  chatId: string,
+  scope: { kind?: ChatKind; projectSlug?: string | null },
+): string {
   // Deterministic per-chat OpenClaw session so reloads continue the same context
-  // when the underlying session is still warm on the agent.
-  return `agent:main:clawhq-${chatId.slice(0, 8)}`;
+  // when the underlying session is still warm on the agent. Scope prefix
+  // (oswald/pmhq/clawhq) is centralized in sessionScopePrefix() — see
+  // ChatApp.tsx where the relay's session regex is matched.
+  return `agent:main:${sessionScopePrefix(scope)}-${chatId.slice(0, 8)}`;
 }
 
 // Parse a HUD-shaped system row (matches OHQ's `done · 6→748 tok · $0.0986 · ctx 72.0%`).
@@ -491,7 +499,7 @@ async function buildMemoryPreamble(
   }
 }
 
-export function ChatDetailView({ client, chatId, projectSlug, status, onTitleChange, initialSearchQuery, onChatStatus }: Props) {
+export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, onTitleChange, initialSearchQuery, onChatStatus }: Props) {
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [chatTitle, setChatTitle] = useState<string>("");
   const [input, setInput] = useState("");
@@ -513,7 +521,10 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   const [showHistoryPicker, setShowHistoryPicker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const sessionKey = useMemo(() => sessionKeyFor(chatId), [chatId]);
+  const sessionKey = useMemo(
+    () => sessionKeyFor(chatId, { kind: chatKind, projectSlug }),
+    [chatId, chatKind, projectSlug],
+  );
   /** Currently-active model for this chat's session. Null = gateway default. */
   const [currentModel, setCurrentModel] = useState<string | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);

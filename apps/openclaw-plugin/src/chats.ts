@@ -22,6 +22,14 @@ export interface ChatMessage {
   createdMs: number;
 }
 
+/**
+ * Chat scope:
+ *   "project" — bound to a workspace project (projectSlug populated).
+ *   "head"    — portfolio-level chat with head Oswald. projectSlug=null.
+ * Missing field on legacy chats reads as "project" for back-compat.
+ */
+export type ChatKind = "project" | "head";
+
 export interface Chat {
   id: string;
   projectSlug: string | null;
@@ -29,6 +37,7 @@ export interface Chat {
   createdMs: number;
   updatedMs: number;
   messages: ChatMessage[];
+  kind?: ChatKind;
 }
 
 export interface ChatSummary {
@@ -38,6 +47,7 @@ export interface ChatSummary {
   createdMs: number;
   updatedMs: number;
   messageCount: number;
+  kind?: ChatKind;
 }
 
 async function ensureDir(): Promise<void> {
@@ -106,6 +116,7 @@ export async function listChats(projectSlug?: string): Promise<ChatSummary[]> {
         createdMs: chat.createdMs,
         updatedMs: chat.updatedMs,
         messageCount: chat.messages.length,
+        ...(chat.kind ? { kind: chat.kind } : {}),
       });
     } catch {
       // skip corrupt file
@@ -118,20 +129,26 @@ export async function listChats(projectSlug?: string): Promise<ChatSummary[]> {
 export async function createChat(input: {
   projectSlug?: string | null;
   title?: string;
+  kind?: ChatKind;
 }): Promise<Chat> {
   await ensureDir();
+  const kind: ChatKind = input.kind === "head" ? "head" : "project";
+  // head chats have no project context, so any projectSlug passed in is dropped.
   const projectSlug =
-    input.projectSlug && VALID_SLUG.test(input.projectSlug)
-      ? input.projectSlug
-      : null;
+    kind === "head"
+      ? null
+      : input.projectSlug && VALID_SLUG.test(input.projectSlug)
+        ? input.projectSlug
+        : null;
   const now = Date.now();
   const chat: Chat = {
     id: randomUUID(),
     projectSlug,
-    title: input.title?.trim() || "New chat",
+    title: input.title?.trim() || (kind === "head" ? "Head Oswald" : "New chat"),
     createdMs: now,
     updatedMs: now,
     messages: [],
+    kind,
   };
   await withChatLock(chat.id, () => writeChatAtomic(chat));
   return chat;

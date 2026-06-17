@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { SessionSummary, ChatRecentSummary, ChatStatus } from "./ChatApp.js";
+import type { SessionSummary, ChatRecentSummary, ChatStatus, ChatKind } from "./ChatApp.js";
 
 const CLAWHQ_SESSION_PREFIX = "agent:main:clawhq-";
 import type { User } from "../api.js";
@@ -119,7 +119,10 @@ interface Props {
   activeSessionKey: string | null;
   onPickSession(key: string): void;
   activeChatId: string | null;
+  activeChatKind?: ChatKind;
   onPickChat(chatId: string, projectSlug: string | null, searchQuery?: string): void;
+  /** Open (or create on first use) the pinned Head Oswald chat. */
+  onPickHeadOswald(): void | Promise<void>;
   onChatDeleted?(chatId: string): void;
   activeProjectSlug: string | null;
   onPickProject(slug: string): void;
@@ -151,7 +154,9 @@ export function Sidebar({
   activeSessionKey,
   onPickSession,
   activeChatId,
+  activeChatKind,
   onPickChat,
+  onPickHeadOswald,
   onChatDeleted,
   activeProjectSlug,
   onPickProject,
@@ -668,18 +673,21 @@ export function Sidebar({
                         The agent-filter chips above are vestigial for chats
                         (they filter raw sessions, not chats) — hide the
                         Recent body when a non-"all" filter is active so the
-                        chips still gate something meaningful. */}
-                    {filter === "all" && recentChats.length > 0 && (
+                        chips still gate something meaningful. Head Oswald
+                        chats are excluded here because they have their own
+                        pinned row above Projects (Phase 8.1). */}
+                    {(() => null)()}
+                    {filter === "all" && recentChats.filter((c) => c.kind !== "head").length > 0 && (
                       <div className="cl-section-label">Recent</div>
                     )}
 
                     <div className="cl-list">
                       {filter !== "all" ? (
                         <div className="cl-list-empty">Recent chats ignore the agent filter — switch to All to see them.</div>
-                      ) : recentChats.length === 0 ? (
+                      ) : recentChats.filter((c) => c.kind !== "head").length === 0 ? (
                         <div className="cl-list-empty">No chats yet.</div>
                       ) : (
-                        recentChats.map((chat) => {
+                        recentChats.filter((c) => c.kind !== "head").map((chat) => {
                           const isActive = page === "chat" && chat.id === activeChatId;
                           const statusKind = chatStatuses.get(chat.id);
                           return (
@@ -722,6 +730,21 @@ export function Sidebar({
                 )}
               </div>
             </div>
+          </div>
+
+          {/* Head Oswald — pinned chat surface for portfolio-level conversations
+              (Phase 8.1). Routes to a kind="head" chat with session-key prefix
+              `agent:main:oswald-*`. Distinct from project chats below. */}
+          <div className="cl-sidebar-group cl-head-oswald-group">
+            <button
+              type="button"
+              className={`cl-head-oswald-row ${activeChatKind === "head" ? "cl-active" : ""}`}
+              onClick={() => { void onPickHeadOswald(); }}
+              title="Portfolio-level chat with head Oswald (separate from project specialists)"
+            >
+              <span className="cl-head-oswald-icon" aria-hidden="true">🦉</span>
+              <span className="cl-head-oswald-label">Head Oswald</span>
+            </button>
           </div>
 
           {/* Projects — placeholder for Phase C (workspace cards). */}

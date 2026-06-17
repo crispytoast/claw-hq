@@ -45,12 +45,36 @@ export interface SessionSummary {
   lastActivityMs?: number;
 }
 
+export type ChatKind = "project" | "head";
+
 export interface ChatRecentSummary {
   id: string;
   projectSlug: string | null;
   title: string;
   updatedMs: number;
   messageCount: number;
+  kind?: ChatKind;
+}
+
+/**
+ * Session-key prefix mapping. Returns the leading scope segment used in
+ * `agent:main:<prefix>-<chatIdFragment>`. Centralized so the relay's regex
+ * and the SPA's session-key constructor stay in lockstep.
+ *
+ * Mapping:
+ *   kind=head                                 → "oswald"
+ *   projectSlug="pm-hq"                       → "pmhq"
+ *   anything else / undefined / null          → "clawhq"  (back-compat default;
+ *                                                every existing chat was
+ *                                                created before the per-scope
+ *                                                prefix split.)
+ */
+export function sessionScopePrefix(
+  chat: { kind?: ChatKind; projectSlug?: string | null },
+): "oswald" | "pmhq" | "clawhq" {
+  if (chat.kind === "head") return "oswald";
+  if (chat.projectSlug === "pm-hq") return "pmhq";
+  return "clawhq";
 }
 
 /** Per-chat live status. orange = user sent, awaiting response; green = done. */
@@ -69,6 +93,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeChatProject, setActiveChatProject] = useState<string | null>(null);
+  const [activeChatKind, setActiveChatKind] = useState<ChatKind | undefined>(undefined);
   const [activeChatTitle, setActiveChatTitle] = useState<string>("");
   const [chatSearchQuery, setChatSearchQuery] = useState<string | null>(null);
   const [activeProjectSlug, setActiveProjectSlug] = useState<string | null>(null);
@@ -218,6 +243,7 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveKey(key);
     setActiveChatId(null);
     setActiveChatProject(null);
+    setActiveChatKind(undefined);
     setActiveProjectSlug(null);
     setActiveMemoryProject(null);
     setActiveWorkspaceMemory(false);
@@ -227,6 +253,11 @@ export function ChatApp({ user, onLogout }: Props) {
   const handlePickChat = useCallback((chatId: string, projectSlug: string | null, searchQuery?: string) => {
     setActiveChatId(chatId);
     setActiveChatProject(projectSlug);
+    // kind lookup against the recent-chats cache. For chats not in the cache
+    // (cross-device deep link), default to project; the chat-detail loader
+    // re-syncs from the persisted record's kind via the history response.
+    const cached = recentChatsRef.current.find((c) => c.id === chatId);
+    setActiveChatKind(cached?.kind);
     setActiveChatTitle("");
     setActiveProjectSlug(null);
     setActiveMemoryProject(null);
@@ -234,11 +265,61 @@ export function ChatApp({ user, onLogout }: Props) {
     setPage("chat");
   }, []);
 
+  /**
+   * Head Oswald entry point. Pinned in the sidebar above Projects. Opens
+   * the most recent head chat if one exists; otherwise creates one.
+   * Per Phase 8.1.
+   */
+  const handlePickHeadOswald = useCallback(async () => {
+    const c = clientRef.current;
+    if (!c || status.kind !== "ready") return;
+    const existing = recentChatsRef.current.find((chat) => chat.kind === "head");
+    if (existing) {
+      setActiveChatId(existing.id);
+      setActiveChatProject(null);
+      setActiveChatKind("head");
+      setActiveChatTitle("");
+      setActiveProjectSlug(null);
+      setActiveMemoryProject(null);
+      setPage("chat");
+      setMobileOpen(false);
+      return;
+    }
+    try {
+      const data = await c.call<{ chat: { id: string; projectSlug: string | null; title: string; updatedMs: number; createdMs: number; kind?: ChatKind } }>(
+        "clawhq.chats.create",
+        { kind: "head", title: "Head Oswald" },
+      );
+      setRecentChats((prev) => [
+        {
+          id: data.chat.id,
+          projectSlug: null,
+          title: data.chat.title,
+          updatedMs: data.chat.updatedMs,
+          messageCount: 0,
+          kind: "head",
+        },
+        ...prev,
+      ]);
+      setActiveChatId(data.chat.id);
+      setActiveChatProject(null);
+      setActiveChatKind("head");
+      setActiveChatTitle("");
+      setActiveProjectSlug(null);
+      setActiveMemoryProject(null);
+      setPage("chat");
+      setMobileOpen(false);
+    } catch (err) {
+      console.warn("Head Oswald chat create failed:", err);
+    }
+  }, [status.kind]);
+
   const handlePickProject = useCallback((slug: string) => {
     setActiveProjectSlug(slug);
     setActiveProjectSub(null);
     setActiveChatId(null);
     setActiveChatProject(null);
+    setActiveChatKind(undefined);
     setActiveChatTitle("");
     setActiveMemoryProject(null);
     setActiveWorkspaceMemory(false);
@@ -250,6 +331,7 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveProjectSub(subSlug);
     setActiveChatId(null);
     setActiveChatProject(null);
+    setActiveChatKind(undefined);
     setActiveChatTitle("");
     setActiveMemoryProject(null);
     setActiveWorkspaceMemory(false);
@@ -262,6 +344,7 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveProjectSlug(null);
     setActiveChatId(null);
     setActiveChatProject(null);
+    setActiveChatKind(undefined);
     setActiveChatTitle("");
     setPage("chat");
   }, []);
@@ -272,6 +355,7 @@ export function ChatApp({ user, onLogout }: Props) {
     setActiveProjectSlug(null);
     setActiveChatId(null);
     setActiveChatProject(null);
+    setActiveChatKind(undefined);
     setActiveChatTitle("");
     setPage("chat");
   }, []);
@@ -283,6 +367,7 @@ export function ChatApp({ user, onLogout }: Props) {
   const handleChatDeleted = useCallback((deletedId: string) => {
     setActiveChatId((curr) => (curr === deletedId ? null : curr));
     setActiveChatProject((curr) => (activeChatId === deletedId ? null : curr));
+    setActiveChatKind((curr) => (activeChatId === deletedId ? undefined : curr));
   }, [activeChatId]);
 
   const handleSelectPage = useCallback((next: SidebarPage) => {
@@ -402,6 +487,7 @@ export function ChatApp({ user, onLogout }: Props) {
     if (chat) {
       setActiveChatId(chat.id);
       setActiveChatProject(chat.projectSlug);
+      setActiveChatKind(chat.kind);
       setActiveProjectSlug(null);
       setActiveMemoryProject(null);
       setActiveWorkspaceMemory(false);
@@ -586,7 +672,9 @@ export function ChatApp({ user, onLogout }: Props) {
         activeSessionKey={activeKey}
         onPickSession={handlePickSession}
         activeChatId={activeChatId}
+        activeChatKind={activeChatKind}
         onPickChat={handlePickChat}
+        onPickHeadOswald={handlePickHeadOswald}
         onChatDeleted={handleChatDeleted}
         activeProjectSlug={activeProjectSlug}
         onPickProject={handlePickProject}
@@ -668,6 +756,7 @@ export function ChatApp({ user, onLogout }: Props) {
                 client={clientRef.current}
                 chatId={activeChatId}
                 projectSlug={activeChatProject}
+                chatKind={activeChatKind}
                 status={status}
                 onTitleChange={handleChatTitle}
                 initialSearchQuery={chatSearchQuery ?? undefined}
@@ -691,7 +780,7 @@ export function ChatApp({ user, onLogout }: Props) {
           <SessionsPage
             client={clientRef.current}
             status={status}
-            onOpenSession={(k) => { setActiveKey(k); setActiveChatId(null); setActiveChatProject(null); setPage("chat"); }}
+            onOpenSession={(k) => { setActiveKey(k); setActiveChatId(null); setActiveChatProject(null); setActiveChatKind(undefined); setPage("chat"); }}
           />
         )}
         {page === "subprojects" && (

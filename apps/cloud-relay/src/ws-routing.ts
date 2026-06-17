@@ -32,7 +32,17 @@ interface SingleTenantState {
   clients: Map<string, WebSocket>;
 }
 
-const CLAWHQ_SESSION_RE = /^agent:main:clawhq-([A-Za-z0-9-]+)$/;
+/**
+ * Matches Claw HQ session keys, regardless of scope prefix.
+ *   group 1: scope prefix (`clawhq`, `pmhq`, `oswald`, etc.)
+ *   group 2: chatId fragment (first 8 chars of the chat UUID)
+ *
+ * The scope prefix is captured for future routing (Phase 8.2 specialist
+ * boot), but every prefix uses the same chatIdFragment-based deep link
+ * (`/chat-detail/<fragment>`) since chatIds are globally unique inside
+ * the user's chat store.
+ */
+const CLAWHQ_SESSION_RE = /^agent:main:([a-z]+)-([A-Za-z0-9-]+)$/;
 
 function frameToText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -77,19 +87,21 @@ function notificationForFrame(envelope: TunnelEnvelope):
     const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "";
     if (role !== "assistant") return null;
 
-    const clawhq = sessionKey.match(CLAWHQ_SESSION_RE);
+    const scoped = sessionKey.match(CLAWHQ_SESSION_RE);
+    const scopePrefix = scoped?.[1] ?? "";
+    const chatIdPrefix = scoped?.[2] ?? "";
     const summary = messageObj ? frameToText(messageObj.content).trim() : "";
     const body = summary
       ? summary.length > 120 ? summary.slice(0, 117) + "..." : summary
       : "Tap to open the chat.";
 
-    if (clawhq && clawhq[1]) {
+    if (chatIdPrefix) {
       return {
         title: "Response ready",
         body,
         kind: "chat.complete",
-        deepLink: `/chat-detail/${clawhq[1]}`,
-        data: { chatIdPrefix: clawhq[1], sessionKey },
+        deepLink: `/chat-detail/${chatIdPrefix}`,
+        data: { chatIdPrefix, sessionKey, scope: scopePrefix },
       };
     }
     // Non-clawhq session (background agent or raw OpenClaw session).
@@ -145,8 +157,9 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
     if (payload.state !== "final") return;
     const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : "";
     if (!sessionKey) return;
-    const clawhq = sessionKey.match(CLAWHQ_SESSION_RE);
-    if (!clawhq || !clawhq[1]) return;
+    const scoped = sessionKey.match(CLAWHQ_SESSION_RE);
+    const chatIdPrefix = scoped?.[2] ?? "";
+    if (!chatIdPrefix) return;
     const messageObj = (payload.message ?? null) as Record<string, unknown> | null;
     const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "";
     if (role !== "assistant") return;
@@ -155,7 +168,7 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
     // chatId prefix is 8 chars; we need the full id to find the file. The
     // SPA already resolves prefix→full via clawhq.chats.list. Walk the chats
     // directory to find the unique chat whose id starts with the prefix.
-    void resolveClawhqChatIdFromPrefix(clawhq[1])
+    void resolveClawhqChatIdFromPrefix(chatIdPrefix)
       .then(async (chatId) => {
         if (!chatId) return;
         const res = await appendAssistantFinalIfNew({ chatId, content });

@@ -26,9 +26,10 @@ import {
   pluginsUninstall,
 } from "./plugins.js";
 import { getDoc, listDocs, searchDocs } from "./docs.js";
+import { buildSpecialistContext } from "./specialist-context.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.16";
+const PLUGIN_VERSION = "0.0.17";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -365,6 +366,49 @@ export default definePluginEntry({
         workspaceRoot ?? "<unset>"
       })`,
     );
+
+    // Phase 8.2 — Session-loader wiring.
+    // When a turn begins on a project-scoped session (`agent:main:clawhq-*`
+    // or `pmhq-*`), prepend that project's SOUL.md + AGENTS.md + BRIEF.md +
+    // latest daily memory note so the specialist persona boots automatically.
+    // Goes into `prependSystemContext` (cacheable, not per-turn token cost).
+    // head Oswald (`oswald-*`) needs no extra context — OpenClaw's default
+    // workspace prelude already loads workspace-root SOUL/USER/AGENTS.
+    if (typeof api.on === "function" && workspaceRoot) {
+      try {
+        api.on(
+          "before_prompt_build",
+          async (_event, ctx) => {
+            const sessionKey =
+              typeof ctx?.sessionKey === "string" ? ctx.sessionKey : "";
+            if (!sessionKey) return;
+            try {
+              const result = await buildSpecialistContext({
+                sessionKey,
+                workspaceRoot,
+              });
+              if (!result.content) return;
+              return { prependSystemContext: result.content };
+            } catch (err) {
+              api.logger.warn(
+                `before_prompt_build specialist-context failed for ${sessionKey}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              );
+              return;
+            }
+          },
+          { priority: 50 },
+        );
+        api.logger.info("clawhq plugin: before_prompt_build specialist-context hook registered");
+      } catch (err) {
+        api.logger.warn(
+          `clawhq plugin: before_prompt_build hook registration failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
 
     api.registerGatewayMethod(
       "clawhq.health",
