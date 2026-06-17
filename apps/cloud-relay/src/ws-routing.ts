@@ -23,6 +23,7 @@ import { findPairingToken, touchPairingToken } from "./db.js";
 import type { ResolvedConfig } from "./config.js";
 import { resolveOwner } from "./auth.js";
 import { deliverNotification } from "./push.js";
+import { appendAssistantFinalIfNew, resolveClawhqChatIdFromPrefix } from "./chats-storage.js";
 
 interface SingleTenantState {
   agent: WebSocket | null;
@@ -31,13 +32,33 @@ interface SingleTenantState {
   clients: Map<string, WebSocket>;
 }
 
+const CLAWHQ_SESSION_RE = /^agent:main:clawhq-([A-Za-z0-9-]+)$/;
+
+function frameToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && "text" in part && typeof (part as { text: unknown }).text === "string") {
+          return (part as { text: string }).text;
+        }
+        return "";
+      })
+      .join("");
+  }
+  return "";
+}
+
 /**
  * Inspect an agent-to-client OpenClaw frame for events that should fire a push
  * notification. Returns null if the frame is uninteresting.
  *
  * Listens for:
- *   - `agent` event with `data.phase: "end"`  — agent turn finished
- *   - `exec.approval.requested` event         — needs human approval
+ *   - `chat` event with `payload.state: "final"` and an assistant message —
+ *     the same signal the SPA uses to flip a chat dot from amber→green.
+ *     Fires per-chat-completion with a deep link into ChatDetailView.
+ *   - `exec.approval.requested` event — needs human approval.
  */
 function notificationForFrame(envelope: TunnelEnvelope):
   | { title: string; body: string; kind: string; deepLink?: string | null; data?: Record<string, string> }
@@ -48,33 +69,36 @@ function notificationForFrame(envelope: TunnelEnvelope):
   const payload = (frame.payload ?? {}) as Record<string, unknown>;
   const data = (payload.data ?? {}) as Record<string, unknown>;
 
-  if (frame.event === "agent" && data.phase === "end") {
-    const session = typeof data.sessionId === "string" ? data.sessionId : "session";
-    const status = typeof data.status === "string" ? data.status : "finished";
-    const summary = typeof data.summary === "string" ? data.summary : `Session ${session}.`;
-    // Route clawhq-backed chat sessions to a chat-record deep link so the tap
-    // lands on ChatDetailView (the human-titled chat) instead of the raw
-    // ChatPane (sessionKey). Pattern: agent:main:clawhq-<8 char chatId
-    // prefix>. Background/main agent runs get the legacy /chat/<sessionId>
-    // link.
-    const clawhq = typeof data.sessionId === "string"
-      ? data.sessionId.match(/^agent:main:clawhq-([A-Za-z0-9-]+)$/)
-      : null;
+  if (frame.event === "chat" && payload.state === "final") {
+    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : "";
+    if (!sessionKey) return null;
+    const messageObj = (payload.message ?? null) as Record<string, unknown> | null;
+    // Only fire for assistant messages — user echoes also flow through `chat`.
+    const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "";
+    if (role !== "assistant") return null;
+
+    const clawhq = sessionKey.match(CLAWHQ_SESSION_RE);
+    const summary = messageObj ? frameToText(messageObj.content).trim() : "";
+    const body = summary
+      ? summary.length > 120 ? summary.slice(0, 117) + "..." : summary
+      : "Tap to open the chat.";
+
     if (clawhq && clawhq[1]) {
       return {
         title: "Response ready",
-        body: summary.length > 120 ? summary.slice(0, 117) + "..." : summary,
+        body,
         kind: "chat.complete",
         deepLink: `/chat-detail/${clawhq[1]}`,
-        data: { chatIdPrefix: clawhq[1] },
+        data: { chatIdPrefix: clawhq[1], sessionKey },
       };
     }
+    // Non-clawhq session (background agent or raw OpenClaw session).
     return {
-      title: `Agent run ${status}`,
-      body: summary,
+      title: "Agent reply ready",
+      body,
       kind: "agent.end",
-      deepLink: typeof data.sessionId === "string" ? `/chat/${data.sessionId}` : null,
-      data: typeof data.sessionId === "string" ? { sessionId: data.sessionId } : undefined,
+      deepLink: `/chat/${sessionKey}`,
+      data: { sessionKey },
     };
   }
 
@@ -113,10 +137,87 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
     return row?.user_id ?? "owner";
   }
 
+  function maybePersistAssistantFinal(envelope: TunnelEnvelope): void {
+    if (envelope.kind !== "frame") return;
+    const frame = envelope.frame;
+    if (frame.type !== "event" || frame.event !== "chat") return;
+    const payload = (frame.payload ?? {}) as Record<string, unknown>;
+    if (payload.state !== "final") return;
+    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : "";
+    if (!sessionKey) return;
+    const clawhq = sessionKey.match(CLAWHQ_SESSION_RE);
+    if (!clawhq || !clawhq[1]) return;
+    const messageObj = (payload.message ?? null) as Record<string, unknown> | null;
+    const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "";
+    if (role !== "assistant") return;
+    const content = messageObj ? frameToText(messageObj.content).trim() : "";
+    if (!content) return;
+    // chatId prefix is 8 chars; we need the full id to find the file. The
+    // SPA already resolves prefix→full via clawhq.chats.list. Walk the chats
+    // directory to find the unique chat whose id starts with the prefix.
+    void resolveClawhqChatIdFromPrefix(clawhq[1])
+      .then(async (chatId) => {
+        if (!chatId) return;
+        const res = await appendAssistantFinalIfNew({ chatId, content });
+        if (res.appended) {
+          console.log(`[chats] server-side appended assistant final to ${chatId.slice(0, 8)} (offline client)`);
+        }
+      })
+      .catch((err) => {
+        console.warn(`[chats] server-side persist failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+  }
+
+  // Dedup recent push triggers by sessionKey + message id. The orphan-pool
+  // design in the tunnel-agent can leave multiple gateway sessions subscribed
+  // to the same OpenClaw sessionKey across SPA reconnects, so OpenClaw
+  // broadcasts the chat-final to all of them; without dedup the relay would
+  // fire one push per session. Bounded LRU keyed by `${sessionKey}::${msgId}`.
+  const pushDedup = new Map<string, number>();
+  const PUSH_DEDUP_TTL_MS = 10 * 60_000;
+
+  function pushDedupKey(envelope: TunnelEnvelope): string | null {
+    if (envelope.kind !== "frame") return null;
+    const f = envelope.frame;
+    if (f.type !== "event") return null;
+    const p = (f.payload ?? {}) as Record<string, unknown>;
+    const sessionKey = typeof p.sessionKey === "string" ? p.sessionKey : "";
+    if (f.event === "chat" && p.state === "final") {
+      const msg = (p.message ?? null) as Record<string, unknown> | null;
+      const id = msg && typeof msg.id === "string" ? msg.id : null;
+      // Fall back to a content-hash if no id ships — better dedup than nothing.
+      const fallback = msg ? frameToText(msg.content).trim().slice(0, 200) : "";
+      const tag = id ?? `c:${fallback}`;
+      return `${sessionKey}::chat::${tag}`;
+    }
+    if (f.event === "exec.approval.requested") {
+      const data = (p.data ?? {}) as Record<string, unknown>;
+      const id = typeof data.approvalId === "string" ? data.approvalId : null;
+      if (!id) return null;
+      return `${sessionKey}::approval::${id}`;
+    }
+    return null;
+  }
+
   function maybeFirePushFromFrame(envelope: TunnelEnvelope): void {
     if (!state.agentOwnerId) return;
     const n = notificationForFrame(envelope);
     if (!n) return;
+    const dedupKey = pushDedupKey(envelope);
+    if (dedupKey) {
+      const now = Date.now();
+      // Reap expired entries cheaply on each touch.
+      if (pushDedup.size > 256) {
+        for (const [k, ts] of pushDedup) {
+          if (now - ts > PUSH_DEDUP_TTL_MS) pushDedup.delete(k);
+        }
+      }
+      if (pushDedup.has(dedupKey)) {
+        console.log(`[push] dedup hit ${dedupKey.slice(0, 80)} — skipping duplicate notification`);
+        return;
+      }
+      pushDedup.set(dedupKey, now);
+    }
     void deliverNotification(
       { db, config },
       {
@@ -195,10 +296,26 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
 
         if (envelope.kind === "frame" && envelope.direction === "agent-to-client") {
           const client = state.clients.get(envelope.clientId);
-          if (client && client.readyState === 1) {
+          const delivered = client && client.readyState === 1;
+          if (delivered) {
             client.send(JSON.stringify(envelope));
           }
           maybeFirePushFromFrame(envelope);
+          // Server-side safety net: if NO SPA client is connected at all,
+          // persist the assistant message ourselves so the SPA can render
+          // it on next reload. Without this, a phone that locked mid-
+          // response would never see the reply because the SPA's own
+          // clawhq.chats.append never ran.
+          //
+          // We deliberately check `state.clients.size === 0` (not just the
+          // envelope's own clientId) because orphan-pool gateway sessions
+          // emit envelopes whose original clientId is no longer in the
+          // routing map — but a freshly-reconnected SPA holds a DIFFERENT
+          // clientId that's actively persisting. Skipping when any client
+          // is online avoids racing two writers to the chat file.
+          if (state.clients.size === 0) {
+            maybePersistAssistantFinal(envelope);
+          }
           return;
         }
 

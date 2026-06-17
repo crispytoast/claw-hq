@@ -368,6 +368,16 @@ a:hover { text-decoration: underline; }
   line-height: 1.7;
   letter-spacing: -0.005em;
 }
+.bubble-timestamp {
+  margin-top: 0.4rem;
+  font-size: 0.68rem;
+  color: rgba(238, 238, 238, 0.45);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  user-select: none;
+}
+.bubble.user .bubble-timestamp { text-align: right; }
+.bubble.assistant .bubble-timestamp { text-align: left; }
 .bubble.assistant {
   background: transparent;
   border: 0;
@@ -659,6 +669,49 @@ a:hover { text-decoration: underline; }
   overflow: hidden;
 }
 .chat-hud-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+/* In-bubble HUD footer pinned to the bottom of assistant bubbles (OHQ-style):
+   token count + context meter, tucked under the message body. */
+.bubble-hud {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  opacity: 0.78;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  letter-spacing: 0.02em;
+}
+.bubble-hud-text {
+  white-space: nowrap;
+}
+.bubble-hud-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+.bubble-hud-bar {
+  position: relative;
+  display: inline-block;
+  width: 52px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.bubble-hud-bar-fill {
   position: absolute;
   left: 0;
   top: 0;

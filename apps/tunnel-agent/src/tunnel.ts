@@ -54,6 +54,10 @@ interface GatewaySession {
   pendingToRelay: OpenClawFrame[];
   pendingToGateway: OpenClawFrame[];
   gatewayToken: string;
+  /** Wall-clock of the last frame this session emitted to the relay. Used
+   * by the orphan reaper to distinguish active streams from truly idle
+   * sessions — set on every gateway-to-relay handoff. */
+  lastFrameMs?: number;
 }
 
 export function startTunnel(opts: TunnelOptions): TunnelHandle {
@@ -202,12 +206,19 @@ export function startTunnel(opts: TunnelOptions): TunnelHandle {
       let parsed: unknown;
       try { parsed = JSON.parse(raw.toString()); } catch { return; }
       if (!isOpenClawFrame(parsed)) return;
-      handleGatewayFrame(clientId, parsed);
+      // Pass `session` directly (captured in this closure) so frames keep
+      // flowing after `detachClient` has removed the entry from `gateways`
+      // and moved the session into the orphan pool.
+      handleGatewayFrame(clientId, session, parsed);
     });
 
     ws.on("close", (code, reason) => {
       console.log(`[tunnel] gateway close clientId=${clientId} code=${code} reason=${reason.toString() || "(none)"}`);
       gateways.delete(clientId);
+      // If this WS was an orphan (SPA detached earlier), drop it from the
+      // orphan pool now that it's actually closed.
+      const closedSession = session;
+      orphans.delete(closedSession);
     });
 
     ws.on("error", (err) => {
@@ -215,13 +226,47 @@ export function startTunnel(opts: TunnelOptions): TunnelHandle {
     });
   };
 
+  /**
+   * Hard ceiling on how long an orphaned (no SPA client) gateway session
+   * stays alive. Active agent runs of any duration are protected: each
+   * frame the gateway emits bumps `lastFrameMs`, so an actively-streaming
+   * run never trips this. The cap only fires for truly idle orphans
+   * (run finished, nobody reconnected) — a safety net against leaked
+   * sessions, not a deadline.
+   */
+  const GATEWAY_ORPHAN_IDLE_MS = 30 * 60_000;
+  const GATEWAY_ORPHAN_CHECK_MS = 60_000;
+  /** Orphaned gateway sessions (SPA disconnected). Kept alive so in-flight
+   * agent runs can finish, fire push, and persist server-side. */
+  const orphans = new Set<GatewaySession>();
+
   const detachClient = (clientId: string, reason: string): void => {
     const session = gateways.get(clientId);
     if (!session) return;
-    console.log(`[tunnel] close gateway clientId=${clientId} reason=${reason}`);
-    if (session.ws.readyState <= 1) session.ws.close(1000, reason);
+    console.log(`[tunnel] client detached, orphaning gateway (agent run can finish) clientId=${clientId} reason=${reason}`);
+    // Remove from the clientId routing map but DO NOT close the WS. The
+    // OpenClaw session keeps running; emitted frames will still flow to
+    // the relay where notification + server-side chat persistence pick
+    // them up. New SPA reconnects get their own fresh gateway via
+    // attachClient — the orphan finishes its work in the background.
     gateways.delete(clientId);
+    session.lastFrameMs = Date.now();
+    orphans.add(session);
   };
+
+  // Periodic sweep of orphans: close any that have been idle (no frames)
+  // for longer than the ceiling.
+  setInterval(() => {
+    const now = Date.now();
+    for (const session of orphans) {
+      const idleMs = now - (session.lastFrameMs ?? now);
+      if (idleMs >= GATEWAY_ORPHAN_IDLE_MS) {
+        console.log(`[tunnel] orphan gateway idle ${Math.floor(idleMs / 60_000)}min, closing`);
+        if (session.ws.readyState <= 1) session.ws.close(1000, "orphan idle");
+        orphans.delete(session);
+      }
+    }
+  }, GATEWAY_ORPHAN_CHECK_MS).unref();
 
   const forwardClientFrameToGateway = (clientId: string, frame: OpenClawFrame): void => {
     const session = gateways.get(clientId);
@@ -253,10 +298,7 @@ export function startTunnel(opts: TunnelOptions): TunnelHandle {
     session.ws.send(JSON.stringify(frame));
   };
 
-  const handleGatewayFrame = (clientId: string, frame: OpenClawFrame): void => {
-    const session = gateways.get(clientId);
-    if (!session) return;
-
+  const handleGatewayFrame = (clientId: string, session: GatewaySession, frame: OpenClawFrame): void => {
     if (session.state === "handshaking") {
       if (frame.type === "event" && frame.event === "connect.challenge") {
         const payload = (frame.payload ?? {}) as Record<string, unknown>;
@@ -348,6 +390,22 @@ export function startTunnel(opts: TunnelOptions): TunnelHandle {
   };
 
   const forwardGatewayFrameToRelay = (clientId: string, frame: OpenClawFrame): void => {
+    // Mark this session as actively producing output so the orphan reaper
+    // leaves it alone — applies to both attached and orphaned sessions.
+    const owning = gateways.get(clientId);
+    if (owning) {
+      owning.lastFrameMs = Date.now();
+    } else {
+      for (const s of orphans) {
+        if (s.ws.readyState === 1) {
+          // Best-effort: any orphan whose WS just emitted is "alive".
+          // We can't match clientId here (the routing map already deleted
+          // the entry) — bumping all orphans on each frame is cheap and
+          // keeps the reaper from killing an actively-streaming run.
+          s.lastFrameMs = Date.now();
+        }
+      }
+    }
     if (relay && relay.readyState === 1) {
       safeSendRelay({ kind: "frame", clientId, direction: "agent-to-client", frame });
       return;

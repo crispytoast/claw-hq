@@ -12,6 +12,8 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.net.Uri
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -37,6 +39,10 @@ class MainActivity : Activity() {
     private var webView: WebView? = null
     private var voiceBridge: VoiceBridge? = null
     private var updaterBridge: UpdaterBridge? = null
+    /** Held across the file-picker round trip launched by `<input type="file">`
+     *  inside the SPA. Must be invoked with the picker result (URIs or null
+     *  on cancel) or the WebView keeps the input element permanently locked. */
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -97,8 +103,61 @@ class MainActivity : Activity() {
                     // Keep navigation inside our WebView — the relay URL is the only origin.
                     return false
                 }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    // Re-attempt push registration once the WebView has a real
+                    // page loaded — by then the session cookie is in
+                    // CookieManager and the borrowing logic in ClawHqApp can
+                    // authenticate POST /api/push/devices. Idempotent: upsert
+                    // on the relay side.
+                    ClawHqApp.instance?.bootstrapPushIfRelayKnown()
+                    // Feed the current URL into ClawHqApp so the FCM service
+                    // can suppress notifications for a chat the user is
+                    // already looking at.
+                    ClawHqApp.instance?.setCurrentWebViewUrl(url)
+                }
             }
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>?,
+                    fileChooserParams: FileChooserParams?,
+                ): Boolean {
+                    // Reject the prior callback if the user re-opened the
+                    // picker without the previous round-trip completing.
+                    fileChooserCallback?.onReceiveValue(null)
+                    fileChooserCallback = filePathCallback
+                    val acceptTypes = fileChooserParams?.acceptTypes?.filter { it.isNotBlank() }
+                    val mime = when {
+                        acceptTypes.isNullOrEmpty() -> "*/*"
+                        acceptTypes.size == 1 -> acceptTypes[0]
+                        else -> "*/*"
+                    }
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = mime
+                        putExtra(
+                            Intent.EXTRA_ALLOW_MULTIPLE,
+                            fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE,
+                        )
+                        if (acceptTypes != null && acceptTypes.size > 1) {
+                            putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes.toTypedArray())
+                        }
+                    }
+                    return try {
+                        @Suppress("DEPRECATION")
+                        startActivityForResult(
+                            Intent.createChooser(intent, "Select files"),
+                            FILE_CHOOSER_REQ,
+                        )
+                        true
+                    } catch (e: Throwable) {
+                        fileChooserCallback = null
+                        filePathCallback?.onReceiveValue(null)
+                        false
+                    }
+                }
+            }
             setBackgroundColor(Color.parseColor("#1B1B1B"))
         }
         webView = wv
@@ -300,6 +359,30 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
+    @Deprecated("Plain Activity → must use the legacy callback. SPA file inputs round-trip through here.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != FILE_CHOOSER_REQ) return
+        val cb = fileChooserCallback
+        fileChooserCallback = null
+        if (cb == null) return
+        if (resultCode != Activity.RESULT_OK || data == null) {
+            cb.onReceiveValue(null)
+            return
+        }
+        val uris = mutableListOf<Uri>()
+        val clip = data.clipData
+        if (clip != null) {
+            for (i in 0 until clip.itemCount) {
+                clip.getItemAt(i)?.uri?.let { uris.add(it) }
+            }
+        } else {
+            data.data?.let { uris.add(it) }
+        }
+        cb.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
+    }
+
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -320,4 +403,8 @@ class MainActivity : Activity() {
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    companion object {
+        private const val FILE_CHOOSER_REQ = 2001
+    }
 }

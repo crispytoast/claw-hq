@@ -131,14 +131,21 @@ export async function sendFcmMessage(
   const accessToken = await getAccessToken(sa);
 
   const url = `https://fcm.googleapis.com/v1/projects/${pc.projectId}/messages:send`;
+  // Data-only payload — no top-level `notification` field. That guarantees
+  // `onMessageReceived` fires on the APK even when the app is backgrounded,
+  // so we can suppress in-app duplicates when the user is already on the
+  // matching screen. Title/body travel inside data so the APK can render the
+  // system-tray notification itself.
   const message = {
     message: {
       token: args.token,
-      notification: args.notification,
-      ...(args.data ? { data: args.data } : {}),
+      data: {
+        title: args.notification.title,
+        body: args.notification.body,
+        ...(args.data ?? {}),
+      },
       android: {
         priority: "HIGH",
-        notification: { sound: "default" },
       },
     },
   };

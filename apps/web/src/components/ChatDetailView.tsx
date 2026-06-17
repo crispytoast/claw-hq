@@ -136,6 +136,14 @@ interface DisplayMessage {
   role: "user" | "assistant" | "system";
   text: string;
   streaming?: boolean;
+  /** Wall-clock when the message was created/persisted. Drives the
+   * timestamp shown under each bubble. May be undefined while a message
+   * is mid-stream — we stamp at final. */
+  createdMs?: number;
+  /** OHQ-style HUD footer pinned to the bottom of assistant bubbles:
+   *  token count, cost, context %. Set at chat-final and on history load
+   *  (when a persisted HUD system row follows the assistant). */
+  hud?: { body: string; ctxPct: number | null };
 }
 
 interface ModelEntry {
@@ -263,6 +271,27 @@ function contentToText(content: unknown): string {
   return parts.join("");
 }
 
+/**
+ * Render the timestamp lane under each bubble. Same-day messages show
+ * HH:MM; older messages also tag the day so a long-running chat is
+ * scannable without hover-tooltips.
+ */
+function formatBubbleTimestamp(ms: number): string {
+  const d = new Date(ms);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const hh = d.getHours();
+  const mm = d.getMinutes().toString().padStart(2, "0");
+  const ampm = hh < 12 ? "AM" : "PM";
+  const h12 = hh % 12 === 0 ? 12 : hh % 12;
+  const time = `${h12}:${mm} ${ampm}`;
+  if (sameDay) return time;
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${time}`;
+}
+
 function sessionKeyFor(chatId: string): string {
   // Deterministic per-chat OpenClaw session so reloads continue the same context
   // when the underlying session is still warm on the agent.
@@ -325,6 +354,89 @@ function pickCostUsd(p: Record<string, unknown>): number | null {
   return null;
 }
 const CONTEXT_LIMIT = 200_000;
+
+/**
+ * After a chat-final lands, OpenClaw's session row has the fresh usage —
+ * but there's no per-turn event that carries it. We poll sessions.list a
+ * few times (rapid backoff) until we see numeric usage for our key, then
+ * attach the HUD directly to the bubbleId for this run.
+ */
+async function fetchAndAttachHud(args: {
+  client: GatewayClient;
+  chatId: string;
+  sessionKey: string;
+  bubbleId: string;
+  setItems: React.Dispatch<React.SetStateAction<DisplayItem[]>>;
+  noteOwnPersist: (id: string) => void;
+}): Promise<void> {
+  const delays = [250, 500, 1000, 1500];
+  for (const ms of delays) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    let row: Record<string, unknown> | null = null;
+    try {
+      const result = await args.client.call<{ sessions?: Array<Record<string, unknown>> }>(
+        "sessions.list",
+        {},
+      );
+      const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+      for (const s of sessions) {
+        if ((s as { key?: string }).key === args.sessionKey) {
+          row = s;
+          break;
+        }
+      }
+    } catch (e) {
+      console.warn("sessions.list (hud poll) failed:", e);
+      return;
+    }
+    if (!row) continue;
+    const num = (k: string): number | null => {
+      const v = row![k];
+      return typeof v === "number" && Number.isFinite(v) ? v : null;
+    };
+    // OpenClaw's row semantics (verified live):
+    //   inputTokens / outputTokens — THIS turn only (per-call)
+    //   totalTokens — cumulative session usage so far
+    //   contextTokens — MODEL'S context window capacity (e.g. 1,048,576 for
+    //                   Opus 4.7's 1M window), NOT current usage. Renaming
+    //                   would help; we'll just treat it as the denominator.
+    const inputTokens = num("inputTokens");
+    const outputTokens = num("outputTokens");
+    const totalTokens = num("totalTokens");
+    const contextWindow = num("contextTokens");
+    const costUsd = num("estimatedCostUsd") ?? num("totalCostUsd");
+    if (inputTokens === null && outputTokens === null && costUsd === null && totalTokens === null) continue;
+    const tokensPart = (inputTokens !== null || outputTokens !== null)
+      ? ` · ${inputTokens ?? 0}→${outputTokens ?? 0} tok`
+      : "";
+    const costPart = costUsd !== null ? ` · $${costUsd.toFixed(4)}` : "";
+    const body = `done${tokensPart}${costPart}`;
+    const ctxPct = totalTokens !== null && totalTokens > 0
+      && contextWindow !== null && contextWindow > 0
+      ? Math.min(999, (totalTokens / contextWindow) * 100)
+      : null;
+    const hud = { body, ctxPct };
+    args.setItems((prev) => prev.map((it) =>
+      it.kind === "message" && it.message.id === args.bubbleId
+        ? { kind: "message" as const, message: { ...it.message, hud } }
+        : it,
+    ));
+    const hudText = ctxPct !== null ? `${body} · ctx ${ctxPct.toFixed(1)}%` : body;
+    void args.client
+      .call<{ message?: { id?: string } }>("clawhq.chats.append", {
+        chatId: args.chatId,
+        role: "system",
+        content: hudText,
+      })
+      .then((r) => {
+        if (r?.message?.id) args.noteOwnPersist(r.message.id);
+      })
+      .catch((e) => {
+        console.warn("clawhq.chats.append (hud) failed:", e);
+      });
+    return;
+  }
+}
 function formatTurnHud(p: Record<string, unknown>, m: Record<string, unknown> | null): { text: string; ctxPct: number | null } | null {
   const usage = pickUsage(p, m);
   const cost = pickCostUsd(p);
@@ -389,6 +501,8 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
   const listRef = useRef<HTMLDivElement | null>(null);
   /** runId -> id of the streaming assistant bubble */
   const streamMapRef = useRef<Map<string, string>>(new Map());
+  /** runId -> HUD that arrived on agent-end before the chat-final bubble existed. */
+  const pendingHudRef = useRef<Map<string, { body: string; ctxPct: number | null }>>(new Map());
   /** Set after we successfully append a memory preamble, so we don't re-inject. */
   const memoryInjectedRef = useRef(false);
   /** Message ids we just persisted via clawhq.chats.append; lets us drop our own broadcast echo. */
@@ -691,6 +805,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     setErr("");
     memoryInjectedRef.current = false;
     streamMapRef.current.clear();
+    pendingHudRef.current.clear();
     void (async () => {
       try {
         const result = await client.call<{ chat: PersistedChat }>(
@@ -728,9 +843,29 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             });
             continue;
           }
+          // If this is a persisted HUD system row, fold it into the
+          // immediately preceding assistant bubble instead of rendering as
+          // its own line — OHQ-style footer.
+          if (m.role === "system") {
+            const parsed = parseHud(m.content);
+            const tail = display[display.length - 1];
+            if (parsed && tail?.kind === "message" && tail.message.role === "assistant") {
+              const updated: DisplayMessage = {
+                ...tail.message,
+                hud: { body: parsed.body, ctxPct: parsed.ctxPct },
+              };
+              display[display.length - 1] = { kind: "message", message: updated };
+              continue;
+            }
+          }
           display.push({
             kind: "message",
-            message: { id: m.id, role: m.role as "user" | "assistant" | "system", text: m.content },
+            message: {
+              id: m.id,
+              role: m.role as "user" | "assistant" | "system",
+              text: m.content,
+              createdMs: m.createdMs,
+            },
           });
         }
         setItems(display);
@@ -743,7 +878,16 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
         console.warn("clawhq.chats.history failed:", e);
         setErr(e instanceof Error ? e.message : String(e));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          // Any in-flight turn from before this mount has either already
+          // finalized server-side (we just loaded its assistant reply from
+          // history) or its `state:"final"` event fired while we were
+          // disconnected and was missed. Either way, the local "thinking"
+          // flag from the prior session is stale — clear it. Streaming
+          // events still in flight will keep updating the assistant bubble.
+          setPending(false);
+        }
       }
     })();
     return () => {
@@ -787,6 +931,29 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
 
       if (state === "final") {
         setPending(false);
+        // Stamp the final bubble with createdMs.
+        setItems((prev) => prev.map((it) =>
+          it.kind === "message" && runId && it.message.id === streamMapRef.current.get(runId)
+            ? { kind: "message" as const, message: { ...it.message, createdMs: Date.now() } }
+            : it,
+        ));
+        // Usage / cost / context aren't on any chat event — they sit on the
+        // session row which OpenClaw patches mid-turn but doesn't emit a
+        // dedicated "tokens updated" event for. The `sessions.changed("send")`
+        // path lags by one turn (it fires when the NEXT turn starts).
+        // Workaround: poll sessions.list shortly after chat-final, find our
+        // session row, attach the HUD to this exact bubble (runId-mapped).
+        const turnBubbleId = runId ? streamMapRef.current.get(runId) : null;
+        if (turnBubbleId) {
+          void fetchAndAttachHud({
+            client,
+            chatId,
+            sessionKey,
+            bubbleId: turnBubbleId,
+            setItems,
+            noteOwnPersist,
+          });
+        }
         // Persist the final assistant text so it survives reload.
         if (text) {
           void client
@@ -802,27 +969,20 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
               console.warn("clawhq.chats.append (assistant) failed:", e);
             });
         }
-        // Emit a HUD row for this turn if the event carries usage/cost. Stays
-        // out of persistence — the HUD is per-turn state, not a chat message.
-        const hud = formatTurnHud(p, messageObj);
-        if (hud) {
-          const hudText = hud.ctxPct !== null
-            ? `${hud.text} · ctx ${hud.ctxPct.toFixed(1)}%`
-            : hud.text;
-          setItems((prev) => [
-            ...prev,
-            {
-              kind: "message" as const,
-              message: { id: newId(), role: "system", text: hudText },
-            },
-          ]);
-        }
+        // HUD persistence moved to the `agent` lifecycle-end listener below
+        // (that's where usage / cost / context tokens actually arrive). The
+        // chat-final event no longer carries this data in current OpenClaw.
         if (runId) {
           setTimeout(() => streamMapRef.current.delete(runId), 1000);
         }
       }
     });
   }, [client, sessionKey, chatId, noteOwnPersist]);
+
+  // HUD is now fetched on demand right after each chat-final via
+  // sessions.list — see fetchAndAttachHud(). The `sessions.changed` event
+  // path was dropped because OpenClaw only emits it on the NEXT turn's
+  // "send", so it lagged by one bubble.
 
   // Tool call events for our sessionKey. We're already globally subscribed via
   // gateway.ts on session_ready; here we just filter to this chat's session.
@@ -1273,7 +1433,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
     const displayText = persistedBody || "(attachment)";
 
     // Optimistic user bubble.
-    const optimistic: DisplayMessage = { id: newId(), role: "user", text: displayText };
+    const optimistic: DisplayMessage = { id: newId(), role: "user", text: displayText, createdMs: Date.now() };
     setItems((prev) => [...prev, { kind: "message", message: optimistic }]);
 
     try {
@@ -1353,7 +1513,7 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
       });
       if (alreadyAnswered) return;
       setPending(true);
-      const optimistic: DisplayMessage = { id: newId(), role: "user", text: label };
+      const optimistic: DisplayMessage = { id: newId(), role: "user", text: label, createdMs: Date.now() };
       setItems((prev) => [...prev, { kind: "message", message: optimistic }]);
       try {
         const appendResult = await client.call<{ message?: { id?: string } }>(
@@ -1494,6 +1654,12 @@ export function ChatDetailView({ client, chatId, projectSlug, status, onTitleCha
             >
               <BubbleContent text={m.text} highlight={initialSearchQuery} />
               {m.streaming && <span className="streaming-caret" aria-hidden="true" />}
+              {!m.streaming && m.role === "assistant" && m.hud && (
+                <BubbleHudFooter hud={m.hud} />
+              )}
+              {!m.streaming && m.createdMs && (
+                <div className="bubble-timestamp">{formatBubbleTimestamp(m.createdMs)}</div>
+              )}
             </div>
           );
         })}
@@ -2140,6 +2306,31 @@ const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|heic|heif|avif)(?:$|\?)/i;
 function isInlineImageUrl(url: string): boolean {
   if (!url.startsWith("/uploads/")) return false;
   return IMAGE_EXT_RE.test(url);
+}
+
+function BubbleHudFooter({ hud }: { hud: { body: string; ctxPct: number | null } }) {
+  const pct = hud.ctxPct;
+  const fillColor =
+    pct === null ? "transparent"
+    : pct > 90 ? "var(--maroon, #B83C5C)"
+    : pct > 70 ? "var(--accent)"
+    : "#4aa064";
+  return (
+    <div className="bubble-hud">
+      <span className="bubble-hud-text">{hud.body}</span>
+      {pct !== null && (
+        <span className="bubble-hud-ctx" title={`Context: ${pct.toFixed(1)}% of model window`}>
+          <span className="bubble-hud-bar" aria-hidden="true">
+            <span
+              className="bubble-hud-bar-fill"
+              style={{ width: `${Math.min(100, pct)}%`, backgroundColor: fillColor }}
+            />
+          </span>
+          <span>ctx {pct.toFixed(0)}%</span>
+        </span>
+      )}
+    </div>
+  );
 }
 
 function SystemRow({ id, text, highlight }: { id: string; text: string; highlight?: string }) {

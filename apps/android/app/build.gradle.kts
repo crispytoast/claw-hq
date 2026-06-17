@@ -11,8 +11,8 @@ android {
         applicationId = "app.clawhq"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "0.4.7"
+        versionCode = 12
+        versionName = "0.5.1"
     }
 
     buildTypes {

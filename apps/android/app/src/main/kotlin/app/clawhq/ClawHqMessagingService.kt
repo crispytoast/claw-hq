@@ -12,11 +12,10 @@ import com.google.firebase.messaging.RemoteMessage
  * FCM bridge.
  *
  * onNewToken    — fires once on first launch + on every Google rotation.
- *                 Forwards to the application so it can POST to the relay.
- * onMessageReceived — fires only when the app is in the foreground
- *                 (Android's system tray handles backgrounded notification
- *                 messages itself). For foreground, render a notification
- *                 manually so the user still gets a heads-up.
+ * onMessageReceived — fires for every message because the relay sends
+ *                 data-only payloads (no top-level `notification` field).
+ *                 We render the notification ourselves so we can suppress
+ *                 it when the user is already on the matching screen.
  */
 class ClawHqMessagingService : FirebaseMessagingService() {
 
@@ -25,17 +24,22 @@ class ClawHqMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        val n = message.notification
-        val title = n?.title ?: message.data["title"] ?: "Claw HQ"
-        val body = n?.body ?: message.data["body"] ?: ""
+        val data = message.data
+        val title = data["title"] ?: "Claw HQ"
+        val body = data["body"] ?: ""
+        val deepLink = data["deepLink"]
         if (title.isBlank() && body.isBlank()) return
 
-        // Construct a tap intent that brings MainActivity to the front; the
-        // notification's data payload becomes available to MainActivity via
-        // getIntent() so future versions can deep-link into the WebView.
+        // Suppression: if the app is foregrounded AND the WebView is already
+        // on the deep-link URL, the user is looking at the chat that just
+        // completed — no notification needed. Falls through to "show" if
+        // app is backgrounded, screen is off, or the user is on a different
+        // chat / screen.
+        if (shouldSuppress(deepLink)) return
+
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            message.data.forEach { (k, v) -> putExtra("notif_$k", v) }
+            data.forEach { (k, v) -> putExtra("notif_$k", v) }
         }
         val pending = PendingIntent.getActivity(
             this, 0, intent,
@@ -52,8 +56,18 @@ class ClawHqMessagingService : FirebaseMessagingService() {
             .setContentIntent(pending)
 
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        // Stable per-message id so repeats stack rather than replace.
         val id = (message.messageId ?: System.currentTimeMillis().toString()).hashCode()
         nm.notify(id, builder.build())
+    }
+
+    private fun shouldSuppress(deepLink: String?): Boolean {
+        val app = ClawHqApp.instance ?: return false
+        if (!app.isAppForegrounded()) return false
+        if (deepLink.isNullOrBlank()) return false
+        val current = app.currentWebViewUrl ?: return false
+        // Path-suffix match: WebView URL is full (http://relay:port/chat-detail/abc).
+        // We only need to know if the path component the push points at is the
+        // one currently rendered.
+        return current.contains(deepLink)
     }
 }

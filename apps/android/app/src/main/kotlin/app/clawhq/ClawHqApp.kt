@@ -1,10 +1,12 @@
 package app.clawhq
 
+import android.app.Activity
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.os.Bundle
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.messaging.FirebaseMessaging
@@ -16,6 +18,7 @@ import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Application object. Owns one app-scoped CoroutineScope. On startup, if a
@@ -30,11 +33,33 @@ class ClawHqApp : Application() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // Foreground tracking for push suppression. `started` counts Activities
+    // currently in started state; foregrounded == started > 0.
+    private val started = AtomicInteger(0)
+    @Volatile var currentWebViewUrl: String? = null
+        private set
+
+    fun isAppForegrounded(): Boolean = started.get() > 0
+
+    /** Called by MainActivity each time the WebView finishes loading a URL. */
+    fun setCurrentWebViewUrl(url: String?) {
+        currentWebViewUrl = url
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
         CrashLog.install(this)
         ensureNotificationChannel()
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityCreated(a: Activity, b: Bundle?) {}
+            override fun onActivityStarted(a: Activity) { started.incrementAndGet() }
+            override fun onActivityResumed(a: Activity) {}
+            override fun onActivityPaused(a: Activity) {}
+            override fun onActivityStopped(a: Activity) { started.decrementAndGet() }
+            override fun onActivitySaveInstanceState(a: Activity, b: Bundle) {}
+            override fun onActivityDestroyed(a: Activity) {}
+        })
         bootstrapPushIfRelayKnown()
     }
 
@@ -91,9 +116,24 @@ class ClawHqApp : Application() {
         val pi = gs.optJSONObject("project_info") ?: return null
         val clients = gs.optJSONArray("client") ?: return null
         if (clients.length() == 0) return null
-        val client0 = clients.getJSONObject(0)
-        val clientInfo = client0.optJSONObject("client_info") ?: return null
-        val apiKeys = client0.optJSONArray("api_key") ?: return null
+
+        // google-services.json may carry multiple Android apps for the same
+        // Firebase project (one per package_name). Pick the entry that matches
+        // OUR package — otherwise FCM rejects the token because the AppCheck
+        // identity doesn't line up. Falls back to client[0] for older configs.
+        val myPackage = packageName
+        var picked: JSONObject? = null
+        for (i in 0 until clients.length()) {
+            val c = clients.getJSONObject(i)
+            val pkg = c.optJSONObject("client_info")
+                ?.optJSONObject("android_client_info")
+                ?.optString("package_name", "")
+                .orEmpty()
+            if (pkg == myPackage) { picked = c; break }
+        }
+        val client = picked ?: clients.getJSONObject(0)
+        val clientInfo = client.optJSONObject("client_info") ?: return null
+        val apiKeys = client.optJSONArray("api_key") ?: return null
         if (apiKeys.length() == 0) return null
         val apiKey = apiKeys.getJSONObject(0).optString("current_key", "")
         if (apiKey.isEmpty()) return null
@@ -116,12 +156,26 @@ class ClawHqApp : Application() {
         httpPostJson("$relayUrl/api/push/devices", body)
     }
 
+    /**
+     * Pull the relay session cookie out of WebView's CookieManager. In
+     * shared-secret / real-auth modes the relay requires this on
+     * /api/push/devices; the WebView already has it (set by /api/auth/login).
+     * The background HTTP client doesn't share the WebView cookie jar, so we
+     * borrow it manually.
+     */
+    private fun cookieHeaderFor(url: String): String? {
+        return runCatching {
+            android.webkit.CookieManager.getInstance().getCookie(url)
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
     private fun httpGet(url: String): String? {
         return runCatching {
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 5_000
                 readTimeout = 5_000
+                cookieHeaderFor(url)?.let { setRequestProperty("Cookie", it) }
             }
             try {
                 if (conn.responseCode in 200..299) conn.inputStream.bufferedReader().use { it.readText() }
@@ -140,6 +194,7 @@ class ClawHqApp : Application() {
                 connectTimeout = 5_000
                 readTimeout = 5_000
                 setRequestProperty("Content-Type", "application/json")
+                cookieHeaderFor(url)?.let { setRequestProperty("Cookie", it) }
             }
             try {
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
