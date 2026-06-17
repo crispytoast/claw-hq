@@ -630,11 +630,13 @@ export default definePluginEntry({
           const p = (params ?? {}) as {
             projectSlug?: unknown;
             title?: unknown;
+            kind?: unknown;
           };
           const projectSlug =
             typeof p.projectSlug === "string" ? p.projectSlug : null;
           const title = typeof p.title === "string" ? p.title : undefined;
-          const chat = await createChat({ projectSlug, title });
+          const kind = p.kind === "head" ? "head" : undefined;
+          const chat = await createChat({ projectSlug, title, kind });
           respond(true, { chat });
           try {
             context.broadcast("plugin.clawhq.chat.created", {
@@ -645,6 +647,7 @@ export default definePluginEntry({
                 createdMs: chat.createdMs,
                 updatedMs: chat.updatedMs,
                 messageCount: chat.messages.length,
+                ...(chat.kind ? { kind: chat.kind } : {}),
               },
             });
           } catch (e) {
