@@ -8,8 +8,9 @@ import { SettingsAboutTab } from "./settings/SettingsAboutTab.js";
 import { SettingsPairingTab } from "./settings/SettingsPairingTab.js";
 import { SettingsPluginsTab } from "./settings/SettingsPluginsTab.js";
 import { SettingsAuthTab } from "./settings/SettingsAuthTab.js";
+import { SettingsChatTab } from "./settings/SettingsChatTab.js";
 
-export type SettingsTab = "openclaw" | "auth" | "pairing" | "plugins" | "notifications" | "updates" | "about";
+export type SettingsTab = "openclaw" | "chat" | "auth" | "pairing" | "plugins" | "notifications" | "updates" | "about";
 
 interface Props {
   user: User;
@@ -21,6 +22,7 @@ interface Props {
 
 const TABS: Array<{ key: SettingsTab; label: string }> = [
   { key: "openclaw", label: "OpenClaw" },
+  { key: "chat", label: "Chat" },
   { key: "auth", label: "Auth" },
   { key: "pairing", label: "Pairing" },
   { key: "plugins", label: "Plugins" },
@@ -54,6 +56,7 @@ export function Settings({ user, onClose, initialTab, client, status }: Props) {
 
       <div className="settings-body">
         {tab === "openclaw" && <SettingsOpenClawTab />}
+        {tab === "chat" && <SettingsChatTab />}
         {tab === "auth" && <SettingsAuthTab />}
         {tab === "pairing" && <SettingsPairingTab />}
         {tab === "plugins" && <SettingsPluginsTab client={client} status={status} />}

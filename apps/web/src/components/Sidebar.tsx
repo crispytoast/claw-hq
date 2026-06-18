@@ -4,6 +4,7 @@ import type { SessionSummary, ChatRecentSummary, ChatStatus, ChatKind } from "./
 const CLAWHQ_SESSION_PREFIX = "agent:main:clawhq-";
 import type { User } from "../api.js";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
+import { getFastModeDefault } from "../chat-prefs.js";
 import {
   Home, Leaf, Check, Books, Brain, Tools, Models, Hand, Clock, Phone,
   Settings, Stethoscope, Plug, Chat, Plus, Clipboard, Chevron, Kebab, X, Folder,
@@ -400,7 +401,11 @@ export function Sidebar({
     try {
       const data = await client.call<ChatCreateResponse>(
         "clawhq.chats.create",
-        { projectSlug: projectId, title: "New chat" },
+        {
+          projectSlug: projectId,
+          title: "New chat",
+          ...(getFastModeDefault() ? { mode: "fast" } : {}),
+        },
       );
       setProjectChats((m) => {
         const existing = m.get(projectId) ?? [];

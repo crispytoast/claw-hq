@@ -14,6 +14,7 @@ import { Settings, type SettingsTab } from "./Settings.js";
 import { NotificationsInbox } from "./NotificationsInbox.js";
 import { Sidebar, type SidebarPage } from "./Sidebar.js";
 import { systemApi } from "../system-api.js";
+import { getFastModeDefault } from "../chat-prefs.js";
 import { ChannelsPage } from "./pages/ChannelsPage.js";
 import { McpsPage } from "./pages/McpsPage.js";
 import { SkillsPage } from "./pages/SkillsPage.js";
@@ -288,7 +289,11 @@ export function ChatApp({ user, onLogout }: Props) {
     try {
       const data = await c.call<{ chat: { id: string; projectSlug: string | null; title: string; updatedMs: number; createdMs: number; kind?: ChatKind } }>(
         "clawhq.chats.create",
-        { kind: "head", title: "Head Oswald" },
+        {
+          kind: "head",
+          title: "Head Oswald",
+          ...(getFastModeDefault() ? { mode: "fast" } : {}),
+        },
       );
       setRecentChats((prev) => [
         {
@@ -341,12 +346,13 @@ export function ChatApp({ user, onLogout }: Props) {
     };
     let newChat: CreatedChat | null = null;
     try {
-      const createPayload: { projectSlug?: string | null; title?: string; kind?: "head" } = {};
+      const createPayload: { projectSlug?: string | null; title?: string; kind?: "head"; mode?: "fast" } = {};
       if (target.kind === "head") {
         createPayload.kind = "head";
       } else {
         createPayload.projectSlug = target.projectSlug;
       }
+      if (getFastModeDefault()) createPayload.mode = "fast";
       const data = await c.call<{ chat: CreatedChat }>(
         "clawhq.chats.create",
         createPayload,

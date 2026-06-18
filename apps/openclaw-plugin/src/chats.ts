@@ -30,6 +30,18 @@ export interface ChatMessage {
  */
 export type ChatKind = "project" | "head";
 
+/**
+ * Chat execution mode (Phase 9.1).
+ *   "gateway" — route chat.send through the OpenClaw gateway (default; full
+ *               plugin tool surface; subject to the gateway's buffer ceiling
+ *               on very large chats).
+ *   "fast"    — relay shells `claude -p` directly per turn, OHQ-style. No
+ *               OpenClaw plugin tools, but no gateway WS in the hot path —
+ *               more reliable for long chats. v1.
+ * Missing field reads as "gateway" for back-compat.
+ */
+export type ChatMode = "gateway" | "fast";
+
 export interface Chat {
   id: string;
   projectSlug: string | null;
@@ -43,6 +55,11 @@ export interface Chat {
    *  active (not archived). Pairs with archivedAt for sort. */
   archived?: boolean;
   archivedAt?: number;
+  mode?: ChatMode;
+  /** Set by fast-path on first turn from the CLI's `system.init` event.
+   *  Subsequent turns pass this back via `claude -p --resume <id>` so the
+   *  conversation continues. Only meaningful when mode === "fast". */
+  claudeSessionId?: string;
 }
 
 export interface ChatSummary {
@@ -55,6 +72,7 @@ export interface ChatSummary {
   kind?: ChatKind;
   archived?: boolean;
   archivedAt?: number;
+  mode?: ChatMode;
 }
 
 async function ensureDir(): Promise<void> {
@@ -137,6 +155,7 @@ export async function listChats(
         ...(chat.kind ? { kind: chat.kind } : {}),
         ...(isArchived ? { archived: true } : {}),
         ...(typeof chat.archivedAt === "number" ? { archivedAt: chat.archivedAt } : {}),
+        ...(chat.mode ? { mode: chat.mode } : {}),
       });
     } catch {
       // skip corrupt file
@@ -176,6 +195,7 @@ export async function createChat(input: {
   projectSlug?: string | null;
   title?: string;
   kind?: ChatKind;
+  mode?: ChatMode;
 }): Promise<Chat> {
   await ensureDir();
   const kind: ChatKind = input.kind === "head" ? "head" : "project";
@@ -195,9 +215,34 @@ export async function createChat(input: {
     updatedMs: now,
     messages: [],
     kind,
+    ...(input.mode === "fast" ? { mode: "fast" as ChatMode } : {}),
   };
   await withChatLock(chat.id, () => writeChatAtomic(chat));
   return chat;
+}
+
+/**
+ * Persist the Claude CLI's session id on a fast-mode chat. Called by the
+ * relay's fast-path handler the first time it sees a `system.init` event
+ * from a freshly spawned `claude -p`. Subsequent turns will pass this back
+ * via `--resume <id>` to continue the conversation.
+ *
+ * No-op for non-fast chats (defensive — keeps callers from worrying).
+ */
+export async function setChatClaudeSessionId(input: {
+  chatId: string;
+  claudeSessionId: string;
+}): Promise<void> {
+  if (!VALID_CHAT_ID.test(input.chatId)) return;
+  if (!input.claudeSessionId) return;
+  await withChatLock(input.chatId, async () => {
+    const chat = await readChat(input.chatId);
+    if (!chat) return;
+    if (chat.mode !== "fast") return;
+    if (chat.claudeSessionId === input.claudeSessionId) return;
+    chat.claudeSessionId = input.claudeSessionId;
+    await writeChatAtomic(chat);
+  });
 }
 
 export async function getChatHistory(id: string): Promise<Chat | null> {

@@ -28,6 +28,9 @@ export interface ChatMessage {
   createdMs: number;
 }
 
+export type ChatMode = "gateway" | "fast";
+export type ChatKind = "project" | "head";
+
 export interface Chat {
   id: string;
   projectSlug: string | null;
@@ -35,6 +38,11 @@ export interface Chat {
   createdMs: number;
   updatedMs: number;
   messages: ChatMessage[];
+  kind?: ChatKind;
+  archived?: boolean;
+  archivedAt?: number;
+  mode?: ChatMode;
+  claudeSessionId?: string;
 }
 
 function chatPath(id: string): string {
@@ -65,6 +73,11 @@ async function readChat(id: string): Promise<Chat | null> {
   } catch {
     return null;
   }
+}
+
+/** Public read for the fast-path handler. Returns null on any read failure. */
+export async function loadChatForFastPath(id: string): Promise<Chat | null> {
+  return readChat(id);
 }
 
 async function writeChatAtomic(chat: Chat): Promise<void> {
@@ -138,5 +151,50 @@ export async function appendAssistantFinalIfNew(input: {
     chat.messages.push(message);
     await writeChatAtomic(chat);
     return { appended: true };
+  });
+}
+
+/**
+ * Append an arbitrary role message to a chat. Used by the fast-path to
+ * persist the user's prompt before spawning claude, and the assistant's
+ * final reply after the run completes. Returns the appended message id
+ * or null if the chat is missing.
+ */
+export async function appendChatMessage(input: {
+  chatId: string;
+  role: ChatRole;
+  content: string;
+}): Promise<string | null> {
+  if (!VALID_CHAT_ID.test(input.chatId)) return null;
+  const content = (input.content ?? "").toString();
+  return withChatLock(input.chatId, async () => {
+    const chat = await readChat(input.chatId);
+    if (!chat) return null;
+    const message: ChatMessage = {
+      id: randomUUID(),
+      role: input.role,
+      content,
+      createdMs: Date.now(),
+    };
+    chat.messages.push(message);
+    await writeChatAtomic(chat);
+    return message.id;
+  });
+}
+
+/** Persist the Claude CLI's session id on a fast-mode chat. No-op otherwise. */
+export async function setChatClaudeSessionIdRelay(input: {
+  chatId: string;
+  claudeSessionId: string;
+}): Promise<void> {
+  if (!VALID_CHAT_ID.test(input.chatId)) return;
+  if (!input.claudeSessionId) return;
+  await withChatLock(input.chatId, async () => {
+    const chat = await readChat(input.chatId);
+    if (!chat) return;
+    if (chat.mode !== "fast") return;
+    if (chat.claudeSessionId === input.claudeSessionId) return;
+    chat.claudeSessionId = input.claudeSessionId;
+    await writeChatAtomic(chat);
   });
 }

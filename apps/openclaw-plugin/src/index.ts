@@ -643,12 +643,14 @@ export default definePluginEntry({
             projectSlug?: unknown;
             title?: unknown;
             kind?: unknown;
+            mode?: unknown;
           };
           const projectSlug =
             typeof p.projectSlug === "string" ? p.projectSlug : null;
           const title = typeof p.title === "string" ? p.title : undefined;
           const kind = p.kind === "head" ? "head" : undefined;
-          const chat = await createChat({ projectSlug, title, kind });
+          const mode = p.mode === "fast" ? "fast" : undefined;
+          const chat = await createChat({ projectSlug, title, kind, mode });
           respond(true, { chat });
           try {
             context.broadcast("plugin.clawhq.chat.created", {
@@ -660,6 +662,7 @@ export default definePluginEntry({
                 updatedMs: chat.updatedMs,
                 messageCount: chat.messages.length,
                 ...(chat.kind ? { kind: chat.kind } : {}),
+                ...(chat.mode ? { mode: chat.mode } : {}),
               },
             });
           } catch (e) {

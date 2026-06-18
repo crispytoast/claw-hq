@@ -23,7 +23,8 @@ import { findPairingToken, touchPairingToken } from "./db.js";
 import type { ResolvedConfig } from "./config.js";
 import { resolveOwner } from "./auth.js";
 import { deliverNotification } from "./push.js";
-import { appendAssistantFinalIfNew, resolveClawhqChatIdFromPrefix } from "./chats-storage.js";
+import { appendAssistantFinalIfNew, loadChatForFastPath, resolveClawhqChatIdFromPrefix } from "./chats-storage.js";
+import { runFastPathTurn } from "./fast-path.js";
 
 interface SingleTenantState {
   agent: WebSocket | null;
@@ -509,6 +510,107 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
     socket.send(JSON.stringify(envelope));
   }
 
+  /**
+   * Inspect a client-to-agent chat.send envelope and route to the fast-path
+   * if the chat opted into it. Returns true when fast-path took the request
+   * (caller MUST NOT also forward to the gateway). Returns false to mean
+   * "fall back to the normal gateway path".
+   */
+  async function maybeFastPath(
+    envelope: TunnelEnvelope,
+    socket: WebSocket,
+    clientId: string,
+  ): Promise<boolean> {
+    if (envelope.kind !== "frame") return false;
+    if (envelope.direction !== "client-to-agent") return false;
+    const frame = envelope.frame;
+    if (frame.type !== "req") return false;
+    const params = (frame.params ?? {}) as Record<string, unknown>;
+    const sessionKey =
+      typeof params.sessionKey === "string"
+        ? params.sessionKey
+        : typeof params.key === "string"
+        ? params.key
+        : "";
+    if (!sessionKey || !CLAWHQ_SESSION_RE.test(sessionKey)) return false;
+
+    const m = sessionKey.match(CLAWHQ_SESSION_RE);
+    const chatPrefix = m?.[2];
+    if (!chatPrefix) return false;
+
+    const chatId = await resolveClawhqChatIdFromPrefix(chatPrefix);
+    if (!chatId) return false;
+
+    const chat = await loadChatForFastPath(chatId);
+    if (!chat || chat.mode !== "fast") return false;
+
+    // Extract the prompt text. The SPA sends `message: <string>` or
+    // an array of content parts. Stringify defensively.
+    const rawMsg = params.message;
+    let promptText = "";
+    if (typeof rawMsg === "string") promptText = rawMsg;
+    else if (Array.isArray(rawMsg)) {
+      promptText = rawMsg
+        .map((p) => {
+          if (typeof p === "string") return p;
+          if (p && typeof p === "object" && "text" in p && typeof (p as { text?: unknown }).text === "string") {
+            return (p as { text: string }).text;
+          }
+          return "";
+        })
+        .join("\n");
+    } else if (rawMsg && typeof rawMsg === "object" && "text" in rawMsg) {
+      promptText = String((rawMsg as { text?: unknown }).text ?? "");
+    }
+    if (!promptText.trim()) {
+      // Send an error response back to the SPA's pending call() promise
+      // and stop. No point spawning claude for empty input.
+      sendEnvelope(socket, {
+        kind: "frame",
+        clientId,
+        direction: "agent-to-client",
+        frame: {
+          type: "res",
+          id: frame.id,
+          ok: false,
+          error: { message: "Fast-path: empty prompt" },
+        },
+      });
+      return true;
+    }
+
+    // Acknowledge the SPA's chat.send req synchronously so the client.call
+    // promise resolves and the SPA stops waiting. The real result streams
+    // back via chat events.
+    sendEnvelope(socket, {
+      kind: "frame",
+      clientId,
+      direction: "agent-to-client",
+      frame: {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        payload: { mode: "fast" },
+      },
+    });
+
+    // Fire and forget — fast-path handles its own errors via chat:error events.
+    void runFastPathTurn(
+      { clients: state.clients },
+      {
+        chatId,
+        sessionKey,
+        reqId: frame.id,
+        promptText,
+        ...(typeof params.model === "string" ? { model: params.model } : {}),
+      },
+    ).catch((e) => {
+      console.error(`[fast-path] turn crashed chatId=${chatId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`);
+    });
+
+    return true;
+  }
+
   function safeParse(raw: string): unknown {
     try {
       return JSON.parse(raw);
@@ -648,6 +750,27 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
         const envelope = parsed;
 
         if (envelope.kind === "frame" && envelope.direction === "client-to-agent") {
+          // Fast-path interception (Phase 9.1). For chat.send requests on a
+          // clawhq session whose backing chat has mode==="fast", bypass the
+          // gateway entirely and run claude -p directly from the relay. The
+          // disk read is small (chat metadata only); we fire-and-forget the
+          // runFastPathTurn so this handler returns immediately.
+          if (
+            envelope.frame.type === "req" &&
+            (envelope.frame.method === "chat.send" || envelope.frame.method === "sessions.messages.send")
+          ) {
+            void maybeFastPath(envelope, socket, clientId).then((handled) => {
+              if (handled) return;
+              // Fall through to the gateway.
+              const tagged: TunnelEnvelope = { ...envelope, clientId };
+              if (state.agent && state.agent.readyState === 1) {
+                state.agent.send(JSON.stringify(tagged));
+              }
+              watchdogArmFromClient(envelope);
+            });
+            return;
+          }
+
           const tagged: TunnelEnvelope = { ...envelope, clientId };
           if (state.agent && state.agent.readyState === 1) {
             state.agent.send(JSON.stringify(tagged));

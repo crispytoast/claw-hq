@@ -1194,6 +1194,23 @@ a:hover { text-decoration: underline; }
   margin-top: 0.5rem;
 }
 
+/* Inline labeled checkbox for settings panes (Phase 9.1 fast-mode toggle). */
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.65rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  user-select: none;
+}
+.settings-toggle input[type="checkbox"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: #d4a24c;
+  cursor: pointer;
+}
+
 .settings-kv {
   display: grid;
   grid-template-columns: max-content 1fr;
