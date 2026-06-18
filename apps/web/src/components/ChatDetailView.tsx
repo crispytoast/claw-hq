@@ -105,10 +105,11 @@ interface Props {
   onArchiveAndStartFresh?(chatId: string): void;
 }
 
-/** Soft-warn threshold for the large-chat banner. Picked well below the
- *  15K-msg disaster zone that triggered the work but high enough that
- *  normal usage doesn't hit it for weeks. Frank can tune. */
-const LARGE_CHAT_BANNER_THRESHOLD = 500;
+/** Soft-warn threshold for the large-chat banner. The OpenClaw gateway's
+ *  underlying Claude CLI hits a turn-output buffer limit well before the
+ *  15K-msg disaster from 2026-06-18. 150 errs on the safe side — banner
+ *  shows once a chat is meaningful but well before the failure mode. */
+const LARGE_CHAT_BANNER_THRESHOLD = 150;
 
 interface PersistedMessage {
   id: string;
@@ -527,6 +528,11 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
   const [pending, setPending] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
+  // Set true when the watchdog ships canCompact:true on a chat:error frame.
+  // Surfaces the "Compact & resume" CTA above the composer. Cleared on
+  // successful sessions.compact + on any subsequent successful run.
+  const [stallCompactAvailable, setStallCompactAvailable] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   /** runId -> id of the streaming assistant bubble */
   const streamMapRef = useRef<Map<string, string>>(new Map());
@@ -990,7 +996,16 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
         const errMsg = typeof p.errorMessage === "string" ? p.errorMessage.trim() : "";
         const reason = errMsg || (state === "aborted" ? "Run aborted before completing." : "Unknown error.");
         const header = state === "aborted" ? "⚠️ Run stopped" : "⚠️ Run failed";
-        const body = `${header}\n\n${reason}\n\n_(The agent didn't produce a reply. If this keeps happening with the same chat, the conversation history may be too large — start a fresh chat.)_`;
+        // Stall failure path: watchdog ships canCompact=true so the user
+        // can one-tap clear the buffer before retrying. Surface the CTA
+        // below the bubble instead of pushing the user to "start a fresh
+        // chat" — compaction is faster and keeps the chat alive.
+        const canCompact = p.canCompact === true;
+        if (canCompact) setStallCompactAvailable(true);
+        const tail = canCompact
+          ? "_(The agent stalled — its session buffer probably overflowed. Tap **Compact & resume** below to clear it, then try again.)_"
+          : "_(The agent didn't produce a reply. If this keeps happening with the same chat, the conversation history may be too large — start a fresh chat.)_";
+        const body = `${header}\n\n${reason}\n\n${tail}`;
         setItems((prev) => {
           const bubbleId = runId ? streamMapRef.current.get(runId) : undefined;
           if (bubbleId) {
@@ -1042,6 +1057,8 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
 
       if (state === "final") {
         setPending(false);
+        // Any successful turn implies the buffer's recovered — clear the stall CTA.
+        setStallCompactAvailable(false);
         // Stamp the final bubble with createdMs.
         setItems((prev) => prev.map((it) =>
           it.kind === "message" && runId && it.message.id === streamMapRef.current.get(runId)
@@ -1845,6 +1862,43 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
           <div className="drop-overlay">Drop to attach</div>
         )}
       </div>
+
+      {stallCompactAvailable && (
+        <div className="chat-stall-cta">
+          <div className="chat-stall-cta-text">
+            Last run stalled — the agent session probably overflowed its buffer.
+            Compact it to clear the buffer, then try again.
+          </div>
+          <div className="chat-stall-cta-actions">
+            <button
+              type="button"
+              className="chat-stall-cta-primary"
+              disabled={compacting}
+              onClick={async () => {
+                if (compacting) return;
+                setCompacting(true);
+                try {
+                  await client.call("sessions.compact", { sessionKey });
+                  setStallCompactAvailable(false);
+                } catch (e) {
+                  setErr(`Compact failed: ${e instanceof Error ? e.message : String(e)}`);
+                } finally {
+                  setCompacting(false);
+                }
+              }}
+            >
+              {compacting ? "Compacting…" : "Compact & resume"}
+            </button>
+            <button
+              type="button"
+              className="chat-stall-cta-dismiss"
+              onClick={() => setStallCompactAvailable(false)}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="composer">
         {showHistoryPicker && (

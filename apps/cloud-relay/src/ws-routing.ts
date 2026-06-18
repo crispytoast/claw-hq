@@ -442,6 +442,12 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
           sessionKey: watch.sessionKey,
           state: "error",
           errorMessage: `Agent run timed out — no output for 10 minutes.${retryNote}`,
+          // Tell the SPA this was a stall, not a model error — it can offer
+          // one-tap session.compact to clear the Claude CLI buffer before
+          // the next turn. This is the recovery path for the OpenClaw
+          // gateway's turn-output buffer ceiling.
+          syntheticReason: "stall",
+          canCompact: true,
           ...(watch.lastRunId ? { runId: watch.lastRunId } : {}),
         },
       },

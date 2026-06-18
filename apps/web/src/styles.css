@@ -753,6 +753,51 @@ a:hover { text-decoration: underline; }
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* Stall-recovery CTA. Surfaces above the composer when the watchdog ships
+   canCompact=true on a chat:error frame — one-tap sessions.compact to clear
+   the OpenClaw gateway's Claude CLI buffer before the next turn. Uses the
+   maroon accent (recovery / attention) instead of amber (advisory). */
+.chat-stall-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 12px 14px;
+  background: rgba(184, 60, 92, 0.10); /* NeonMaroon, low alpha */
+  border: 1px solid rgba(184, 60, 92, 0.40);
+  border-radius: 10px;
+  color: var(--foreground);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.chat-stall-cta-text { flex: 1; }
+.chat-stall-cta-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.chat-stall-cta-primary {
+  background: rgba(184, 60, 92, 0.25);
+  color: #ffb8c8;
+  border: 1px solid rgba(184, 60, 92, 0.60);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.chat-stall-cta-primary:hover:not(:disabled) {
+  background: rgba(184, 60, 92, 0.35);
+  border-color: rgba(184, 60, 92, 0.80);
+}
+.chat-stall-cta-primary:disabled { opacity: 0.6; cursor: progress; }
+.chat-stall-cta-dismiss {
+  background: transparent;
+  color: var(--muted-foreground);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.chat-stall-cta-dismiss:hover { background: rgba(255, 255, 255, 0.04); }
+
 /* In-bubble HUD footer pinned to the bottom of assistant bubbles (OHQ-style):
    token count + context meter, tucked under the message body. */
 .bubble-hud {
