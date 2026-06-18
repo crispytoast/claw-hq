@@ -1,8 +1,8 @@
 {
   "name": "@claw-hq/openclaw-plugin",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "private": true,
-  "description": "OpenClaw plugin that backs Claw HQ — project-scoped chats, sub-project task toggles, file uploads, cross-device live feed.",
+  "description": "OpenClaw plugin that backs Claw HQ \u2014 project-scoped chats, sub-project task toggles, file uploads, cross-device live feed.",
   "license": "UNLICENSED",
   "type": "module",
   "openclaw": {

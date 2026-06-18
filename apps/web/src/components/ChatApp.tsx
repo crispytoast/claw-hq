@@ -3,7 +3,7 @@ import { type User } from "../api.js";
 import { GatewayClient, defaultGatewayUrl, type ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { ChatPane } from "./ChatPane.js";
-import { ChatDetailView } from "./ChatDetailView.js";
+import { ChatDetailView, contentToText } from "./ChatDetailView.js";
 import { SystemHealth } from "./SystemHealth.js";
 import { Bell, Menu, Hourglass } from "./icons.js";
 import { ProjectPage } from "./pages/ProjectPage.js";
@@ -80,11 +80,11 @@ export function sessionScopePrefix(
 /** Per-chat live status. orange = user sent, awaiting response; green = done. */
 export type ChatStatus = "running" | "done";
 
-/** Session keys that back a Claw HQ chat record. We strip these from the
- * Agents tab (they're surfaced under their human title in Recent / Projects)
- * and use the 8-char prefix to bridge agent.end events back to a chatId for
- * status dots + push deep links. */
-const CLAWHQ_SESSION_PREFIX_RE = /^agent:main:clawhq-([A-Za-z0-9-]+)$/;
+/** Session keys that back a Claw HQ chat record. Phase 8.1 generalized the
+ * scope prefix from `clawhq-` to any lowercase scope (`pmhq-`, `oswald-`, …).
+ * Match group 1 = scope, group 2 = 8-char chatId prefix used to bridge
+ * agent.end events back to a chatId for status dots + push deep links. */
+const CLAWHQ_SESSION_PREFIX_RE = /^agent:main:[a-z]+-([A-Za-z0-9-]+)$/;
 
 export function ChatApp({ user, onLogout }: Props) {
   const clientRef = useRef<GatewayClient | null>(null);
@@ -314,6 +314,72 @@ export function ChatApp({ user, onLogout }: Props) {
     }
   }, [status.kind]);
 
+  /**
+   * Archive the current chat and route the user to a fresh chat for the
+   * same project. Wired from ChatDetailView's large-chat banner. The
+   * archived chat stays on disk (so it's browsable from the per-project
+   * Archive section) but disappears from the active chat list.
+   */
+  const handleArchiveAndStartFresh = useCallback(async (chatId: string) => {
+    const c = clientRef.current;
+    if (!c) return;
+    const target = recentChatsRef.current.find((chat) => chat.id === chatId);
+    if (!target) return;
+    try {
+      await c.call("clawhq.chats.archive", { chatId, archived: true });
+    } catch (err) {
+      console.warn("clawhq.chats.archive failed:", err);
+      return;
+    }
+    type CreatedChat = {
+      id: string;
+      projectSlug: string | null;
+      title: string;
+      updatedMs: number;
+      createdMs: number;
+      kind?: ChatKind;
+    };
+    let newChat: CreatedChat | null = null;
+    try {
+      const createPayload: { projectSlug?: string | null; title?: string; kind?: "head" } = {};
+      if (target.kind === "head") {
+        createPayload.kind = "head";
+      } else {
+        createPayload.projectSlug = target.projectSlug;
+      }
+      const data = await c.call<{ chat: CreatedChat }>(
+        "clawhq.chats.create",
+        createPayload,
+      );
+      newChat = data.chat;
+    } catch (err) {
+      console.warn("clawhq.chats.create (post-archive) failed:", err);
+      return;
+    }
+    if (!newChat) return;
+    // Strip the archived chat from recent + prepend the new one. The
+    // server-side broadcast (plugin.clawhq.chat.archived) would also
+    // reach us, but local update is faster.
+    setRecentChats((prev) => {
+      const cleaned = prev.filter((c2) => c2.id !== chatId);
+      return [
+        {
+          id: newChat!.id,
+          projectSlug: newChat!.projectSlug,
+          title: newChat!.title,
+          updatedMs: newChat!.updatedMs,
+          messageCount: 0,
+          ...(newChat!.kind ? { kind: newChat!.kind } : {}),
+        },
+        ...cleaned,
+      ];
+    });
+    setActiveChatId(newChat.id);
+    setActiveChatProject(newChat.projectSlug);
+    setActiveChatKind(newChat.kind ?? "project");
+    setActiveChatTitle(newChat.title);
+  }, []);
+
   const handlePickProject = useCallback((slug: string) => {
     setActiveProjectSlug(slug);
     setActiveProjectSub(null);
@@ -496,17 +562,55 @@ export function ChatApp({ user, onLogout }: Props) {
     setPendingChatPrefix(null);
   }, [pendingChatPrefix, recentChats]);
 
-  // Global chat-event listener — sets done when any clawhq-backed session
-  // emits state==="final". Per-chat ChatDetailView still owns the streaming
-  // bubble updates; this layer just sets the sidebar dot so the user sees
-  // the result even if they navigated away.
+  // Global chat-event listener — handles two things for every clawhq-backed
+  // session emitting state==="final":
+  //   1. Persist the assistant message to its chat file via clawhq.chats.append.
+  //      Lives here (NOT in per-chat ChatDetailView) so the persist runs even
+  //      when the user has navigated away. Previously the chat-detail
+  //      component owned this — switching to another chat mid-response
+  //      caused the reply to land at the relay with no listener to save it,
+  //      and the relay's safety-net only fires when zero SPA clients are
+  //      connected. End result: dropped replies on chat-switch.
+  //   2. Set the sidebar dot to "done" so the user sees a result indicator
+  //      even when not viewing that chat.
+  // Archive/restore broadcast — keep recentChats in sync. The Sidebar has
+  // its own listener for projectChats/projectArchivedChats; recentChats
+  // lives here in ChatApp so it needs an independent reactor. Without
+  // this, an archived chat would linger in the Recent group until reload.
+  useEffect(() => {
+    if (!clientRef.current) return;
+    const c = clientRef.current;
+    return c.onEvent((ev: OpenClawEvent) => {
+      if (ev.event !== "plugin.clawhq.chat.archived") return;
+      const p = (ev.payload ?? {}) as { chatId?: unknown; archived?: unknown };
+      if (typeof p.chatId !== "string") return;
+      const chatId = p.chatId;
+      const archived = p.archived === true;
+      if (archived) {
+        setRecentChats((prev) => prev.filter((c2) => c2.id !== chatId));
+        // If the user is currently viewing the chat being archived from
+        // somewhere else, drop them back to no-chat. (Local archive flow
+        // already navigates to the fresh chat; this only fires for
+        // out-of-band archives — kebab menu, etc.)
+        setActiveChatId((curr) => (curr === chatId ? null : curr));
+      }
+      // Restoration case: the Sidebar will re-fetch projectChats; recent
+      // list will repopulate on next chats.list refresh. Not worth a
+      // local insert since restore is rare.
+    });
+  }, []);
+
   useEffect(() => {
     if (!clientRef.current) return;
     const c = clientRef.current;
     return c.onEvent((ev: OpenClawEvent) => {
       if (ev.event !== "chat") return;
       const p = (ev.payload ?? {}) as Record<string, unknown>;
-      if (p.state !== "final") return;
+      const state = p.state;
+      // All three terminal states need the sidebar dot reset; only `final`
+      // takes the persist path here. The relay persists a synthetic ⚠️
+      // bubble for error/aborted on its own.
+      if (state !== "final" && state !== "error" && state !== "aborted") return;
       const sessionKey = typeof p.sessionKey === "string" ? p.sessionKey : null;
       if (!sessionKey) return;
       const m = sessionKey.match(CLAWHQ_SESSION_PREFIX_RE);
@@ -515,6 +619,21 @@ export function ChatApp({ user, onLogout }: Props) {
       const chat = recentChatsRef.current.find((c2) => c2.id.startsWith(prefix));
       if (!chat) return;
       handleChatStatus(chat.id, "done");
+      if (state !== "final") return;
+      const messageObj = (p.message ?? null) as Record<string, unknown> | null;
+      const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "";
+      if (role !== "assistant" || !messageObj) return;
+      const content = contentToText(messageObj.content);
+      if (!content) return;
+      void c
+        .call<{ message?: { id?: string } }>("clawhq.chats.append", {
+          chatId: chat.id,
+          role: "assistant",
+          content,
+        })
+        .catch((err) => {
+          console.warn("global chats.append (assistant final) failed:", err);
+        });
     });
   }, [handleChatStatus]);
 
@@ -642,22 +761,15 @@ export function ChatApp({ user, onLogout }: Props) {
   // becomes a tiny status dot beside the bell. The page-toolbar title row
   // still carries the chat name, so removing the pill text doesn't hide info.
   const toolbar = (
-    <>
-      <button
-        className="bell-btn-compact"
-        aria-label={unreadCount > 0 ? `${unreadCount} notifications` : "Notifications"}
-        onClick={() => setShowInbox(true)}
-        title={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"}
-      >
-        <Bell size={15} />
-        {unreadCount > 0 && <span className="bell-dot" aria-hidden="true" />}
-      </button>
-      <span
-        className={`status-dot-only ${pill.cls}`}
-        title={pill.label}
-        aria-label={pill.label}
-      />
-    </>
+    <button
+      className="bell-btn-compact"
+      aria-label={unreadCount > 0 ? `${unreadCount} notifications` : "Notifications"}
+      onClick={() => setShowInbox(true)}
+      title={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"}
+    >
+      <Bell size={15} />
+      {unreadCount > 0 && <span className="bell-dot" aria-hidden="true" />}
+    </button>
   );
 
   const activeSession = sessions.find((s) => s.sessionKey === activeKey);
@@ -701,7 +813,13 @@ export function ChatApp({ user, onLogout }: Props) {
 
       <main className="cl-main">
         <div className="vitals-strip">
+          <span aria-hidden="true" className="vitals-strip-spacer" />
           <SystemHealth />
+          <span
+            className={`status-dot-only ${pill.cls}`}
+            title={pill.label}
+            aria-label={pill.label}
+          />
         </div>
         <div className="page-toolbar">
           <button
@@ -758,9 +876,11 @@ export function ChatApp({ user, onLogout }: Props) {
                 projectSlug={activeChatProject}
                 chatKind={activeChatKind}
                 status={status}
+                chatStatus={chatStatuses.get(activeChatId)}
                 onTitleChange={handleChatTitle}
                 initialSearchQuery={chatSearchQuery ?? undefined}
                 onChatStatus={handleChatStatus}
+                onArchiveAndStartFresh={handleArchiveAndStartFresh}
               />
             ) : activeKey ? (
               <ChatPane

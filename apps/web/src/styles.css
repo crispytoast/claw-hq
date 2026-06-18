@@ -677,6 +677,82 @@ a:hover { text-decoration: underline; }
   transition: width 0.3s ease;
 }
 
+/* "Show earlier" button rendered above the chat list when older messages are
+   collapsed for render-perf reasons. PM HQ at 14k+ messages used to lag every
+   keystroke; we only render the bottom 100 by default. */
+.chat-show-earlier-row {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 16px;
+}
+.chat-show-earlier {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted-foreground);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.chat-show-earlier:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Large-chat warning banner. Pinned above the message list when message
+   count crosses LARGE_CHAT_BANNER_THRESHOLD. "Archive & start new" wires
+   to the archive-and-new-chat flow in ChatApp. */
+.chat-large-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 12px 12px;
+  padding: 12px 14px;
+  background: rgba(216, 162, 76, 0.10); /* amber accent, low alpha */
+  border: 1px solid rgba(216, 162, 76, 0.35);
+  border-radius: 10px;
+  color: var(--foreground);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.chat-large-banner-text {
+  flex: 1;
+}
+.chat-large-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chat-large-banner-primary {
+  background: rgba(216, 162, 76, 0.20);
+  color: #f1d28a;
+  border: 1px solid rgba(216, 162, 76, 0.55);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.chat-large-banner-primary:hover {
+  background: rgba(216, 162, 76, 0.30);
+  border-color: rgba(216, 162, 76, 0.75);
+}
+.chat-large-banner-dismiss {
+  background: transparent;
+  color: var(--muted-foreground);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.chat-large-banner-dismiss:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
 /* In-bubble HUD footer pinned to the bottom of assistant bubbles (OHQ-style):
    token count + context meter, tucked under the message body. */
 .bubble-hud {
@@ -1261,18 +1337,22 @@ a:hover { text-decoration: underline; }
   gap: 0.5rem;
 }
 
-/* Vitals strip — thin row above the page-toolbar; full width with the
-   SystemHealth content centered. Sits flush against the top so it reads
-   as a status bar, not a row. */
+/* Vitals strip — thin row above the page-toolbar. Three-column grid so the
+   SystemHealth widget stays centered while the OpenClaw connection dot can
+   anchor to the right edge alongside it. Padding matches .page-toolbar so
+   the right-edge anchor aligns vertically with the bell button below. */
 .vitals-strip {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: center;
   min-height: 28px;
-  padding: 0.25rem 0.75rem;
+  padding: 0.25rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
+.vitals-strip > .vitals-strip-spacer { /* invisible left placeholder for the grid */ }
+.vitals-strip > :nth-child(2) { justify-self: center; }
+.vitals-strip > .status-dot-only { justify-self: end; }
 
 /* ============== page shell + lists ============== */
 .page-shell { flex: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -1773,6 +1853,46 @@ a:hover { text-decoration: underline; }
 }
 .cl-chat-row .cl-row-title { font-size: 0.85rem; }
 
+/* Per-project archive section. Sits below the active chats inside an
+   expanded project, visually demoted so it doesn't compete. */
+.cl-project-archive {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.06);
+}
+.cl-project-archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.cl-project-archive-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--foreground);
+}
+.cl-project-archive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 4px 4px;
+}
+.cl-chat-row-archived .cl-row-title {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.cl-chat-row-archived:hover .cl-row-title {
+  color: var(--foreground);
+}
+
 .cl-chat-row-wrap { position: relative; }
 .cl-chat-row-wrap .cl-chat-row { padding-right: 36px; }
 .cl-chat-row-actions {
@@ -2103,6 +2223,99 @@ a:hover { text-decoration: underline; }
   flex-direction: column;
   gap: 4px;
 }
+/* View modes for the re-attach picker — switched live via the head toggle. */
+.composer-history-picker-list.mode-grid4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.composer-history-picker-list.mode-grid1 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+.composer-history-picker-list.mode-grid4 > li,
+.composer-history-picker-list.mode-grid1 > li { min-width: 0; }
+.composer-history-picker-viewtoggle {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  background: var(--bg-elev0);
+  margin: 0 6px 0 auto;
+}
+.composer-history-picker-viewbtn {
+  background: transparent;
+  border: 0;
+  width: 26px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+}
+.composer-history-picker-viewbtn:hover { background: var(--bg-elev2); color: var(--foreground); }
+.composer-history-picker-viewbtn.active { background: var(--bg-elev2); color: var(--accent); }
+.composer-history-picker-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+}
+.composer-history-picker-card:hover:not(:disabled) { background: var(--bg-elev2); border-color: var(--accent); }
+.composer-history-picker-card:disabled { opacity: 0.55; cursor: default; }
+.composer-history-picker-card-imgwrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-elev2);
+}
+.composer-history-picker-list.mode-grid1 .composer-history-picker-card-imgwrap {
+  /* Single-card view: let the image breathe — go widescreen so a full-page
+     screenshot is recognizable. */
+  aspect-ratio: 16 / 10;
+}
+.composer-history-picker-card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.composer-history-picker-card-on {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 0.65rem;
+  background: var(--accent);
+  color: #0e0e0e;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-weight: 600;
+}
+.composer-history-picker-card-name {
+  font-size: 0.78rem;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The picker itself needs more headroom for grids; bump max-height. */
+.composer-history-picker { max-height: 60vh; }
 .composer-history-picker-row {
   width: 100%;
   display: flex;

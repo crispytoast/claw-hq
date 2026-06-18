@@ -9,6 +9,7 @@ import {
   listChats,
   renameChat,
   searchChats,
+  setChatArchived,
   type ChatRole,
 } from "./chats.js";
 import { listAllTasks, toggleTask } from "./tasks.js";
@@ -29,7 +30,7 @@ import { getDoc, listDocs, searchDocs } from "./docs.js";
 import { buildSpecialistContext } from "./specialist-context.js";
 
 const PLUGIN_ID = "clawhq";
-const PLUGIN_VERSION = "0.0.17";
+const PLUGIN_VERSION = "0.0.18";
 
 type ClawHqConfig = {
   workspaceRoot?: string;
@@ -447,6 +448,7 @@ export default definePluginEntry({
             "clawhq.chats.rename",
             "clawhq.chats.delete",
             "clawhq.chats.search",
+            "clawhq.chats.archive",
             "clawhq.tasks.toggle",
             "clawhq.tasks.listAll",
             "clawhq.memory.list",
@@ -575,10 +577,20 @@ export default definePluginEntry({
       "clawhq.chats.list",
       async ({ respond, params }) => {
         try {
-          const p = (params ?? {}) as { projectSlug?: unknown };
+          const p = (params ?? {}) as {
+            projectSlug?: unknown;
+            includeArchived?: unknown;
+          };
           const projectSlug =
             typeof p.projectSlug === "string" ? p.projectSlug : undefined;
-          const chats = await listChats(projectSlug);
+          // Defaults to "active" so every legacy caller keeps the
+          // pre-archive behavior. SPA passes "only" to fetch the per-project
+          // archive tab and "all" for search/admin views.
+          const includeArchived =
+            p.includeArchived === "only" || p.includeArchived === "all"
+              ? p.includeArchived
+              : "active";
+          const chats = await listChats(projectSlug, includeArchived);
           respond(true, { chats });
         } catch (e) {
           respond(false, undefined, {
@@ -714,6 +726,66 @@ export default definePluginEntry({
           } catch (e) {
             api.logger.warn(
               `plugin.clawhq.chat.renamed broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.chats.archive",
+      async ({ respond, params, context }) => {
+        try {
+          const p = (params ?? {}) as { chatId?: unknown; archived?: unknown };
+          if (typeof p.chatId !== "string" || !p.chatId) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: chatId",
+            });
+            return;
+          }
+          // Default is archive=true so the common "Archive now" tap works
+          // without callers needing to pass the flag. Pass archived=false
+          // to restore a chat from the archive.
+          const archived = p.archived === false ? false : true;
+          const chat = await setChatArchived({ chatId: p.chatId, archived });
+          if (!chat) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no chat: ${p.chatId}`,
+            });
+            return;
+          }
+          respond(true, {
+            chat: {
+              id: chat.id,
+              projectSlug: chat.projectSlug,
+              title: chat.title,
+              createdMs: chat.createdMs,
+              updatedMs: chat.updatedMs,
+              messageCount: chat.messages.length,
+              ...(chat.archived ? { archived: true } : {}),
+              ...(typeof chat.archivedAt === "number" ? { archivedAt: chat.archivedAt } : {}),
+            },
+          });
+          try {
+            context.broadcast("plugin.clawhq.chat.archived", {
+              chatId: chat.id,
+              projectSlug: chat.projectSlug,
+              archived: chat.archived === true,
+              archivedAt: chat.archivedAt ?? null,
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.chat.archived broadcast failed: ${
                 e instanceof Error ? e.message : String(e)
               }`,
             );

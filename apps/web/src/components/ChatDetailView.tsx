@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { sessionScopePrefix, type ChatKind } from "./ChatApp.js";
@@ -85,6 +85,10 @@ interface Props {
   /** Scope of this chat (Phase 8.1). undefined = legacy "project" semantics. */
   chatKind?: ChatKind;
   status: ConnectionStatus;
+  /** Per-chat run status from the parent (ChatApp). Drives the persistent
+   * thinking indicator — stays on across chat switches/screen off as long
+   * as the agent is still running. undefined = unknown / not running. */
+  chatStatus?: "running" | "done";
   onTitleChange?(chatId: string, title: string): void;
   /**
    * If set, render `<mark>` highlights around case-insensitive matches in every
@@ -95,7 +99,16 @@ interface Props {
   /** Set the sidebar status dot for this chat. Orange (running) on send;
    * ChatApp's global listener flips to green on state==="final". */
   onChatStatus?(chatId: string, status: "running" | "done"): void;
+  /** Archive the current chat and route the user to a fresh chat for the
+   *  same project. Implemented by ChatApp so it owns the recentChats list
+   *  + activeChatId. The view only renders the banner + button. */
+  onArchiveAndStartFresh?(chatId: string): void;
 }
+
+/** Soft-warn threshold for the large-chat banner. Picked well below the
+ *  15K-msg disaster zone that triggered the work but high enough that
+ *  normal usage doesn't hit it for weeks. Frank can tune. */
+const LARGE_CHAT_BANNER_THRESHOLD = 500;
 
 interface PersistedMessage {
   id: string;
@@ -262,7 +275,7 @@ function newId(): string {
   return `m-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-function contentToText(content: unknown): string {
+export function contentToText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
@@ -499,8 +512,16 @@ async function buildMemoryPreamble(
   }
 }
 
-export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, onTitleChange, initialSearchQuery, onChatStatus }: Props) {
+export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, chatStatus, onTitleChange, initialSearchQuery, onChatStatus, onArchiveAndStartFresh }: Props) {
   const [items, setItems] = useState<DisplayItem[]>([]);
+  /**
+   * How many items off the bottom we actually render. Huge chats (PM HQ at
+   * 14k+ messages) blow render budgets and lag every keystroke when the
+   * full list goes through React reconciliation on each input change.
+   * Default 100 keeps the recent context visible while collapsing the
+   * older 14,765 into a single "Show earlier" button at the top.
+   */
+  const [visibleCount, setVisibleCount] = useState(100);
   const [chatTitle, setChatTitle] = useState<string>("");
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
@@ -519,6 +540,9 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
   const [uploading, setUploading] = useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = useState(false);
   const [showHistoryPicker, setShowHistoryPicker] = useState(false);
+  /** Layout for the clipboard re-attach picker: row list (default), 4-up
+   *  grid of small cards, or 1-up wide preview cards. */
+  const [historyViewMode, setHistoryViewMode] = useState<"list" | "grid4" | "grid1">("list");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const sessionKey = useMemo(
@@ -813,6 +837,7 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     let cancelled = false;
     setLoading(true);
     setItems([]);
+    setVisibleCount(100);
     setErr("");
     memoryInjectedRef.current = false;
     streamMapRef.current.clear();
@@ -906,6 +931,41 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     };
   }, [client, chatId, status.kind]);
 
+  // Reconcile running flag with upstream truth on every (re)connect. The
+  // indicator should reflect the live run state, so we re-poll sessions.list
+  // whenever the gateway flips to ready — not just once on mount. Two cases:
+  //   1. After page reload / SPA cold start: chatStatus is undefined; if the
+  //      upstream session has an active run, hoist "running" up so the dots
+  //      turn on without waiting for the next delta.
+  //   2. After a tunnel drop where chatStatus was "running" and the final
+  //      event fired during disconnect: sessions.list will report no active
+  //      run, so we flip to "done" and the dots stop. Without this the dots
+  //      would dance forever after any missed final.
+  useEffect(() => {
+    if (status.kind !== "ready") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await client.call<{ sessions?: Array<{ key?: string; hasActiveRun?: boolean }> }>(
+          "sessions.list",
+          {},
+        );
+        if (cancelled) return;
+        const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+        const hit = sessions.find((s) => s.key === sessionKey);
+        const active = !!hit?.hasActiveRun;
+        if (active && chatStatus !== "running") {
+          onChatStatus?.(chatId, "running");
+        } else if (!active && chatStatus === "running") {
+          onChatStatus?.(chatId, "done");
+        }
+      } catch (e) {
+        console.warn("sessions.list (running-status reconcile) failed:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [client, sessionKey, chatId, chatStatus, status.kind, onChatStatus]);
+
   // Listen for streaming assistant deltas for our sessionKey.
   useEffect(() => {
     return client.onEvent((ev: OpenClawEvent) => {
@@ -918,6 +978,46 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
       const messageObj = (p.message ?? null) as Record<string, unknown> | null;
       const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "assistant";
       const text = messageObj ? contentToText(messageObj.content) : "";
+
+      // Failure path: OpenClaw emits state="error" (with optional
+      // errorMessage) or state="aborted" when a run dies before producing
+      // a reply. No `message` ships, so the role check below would early-
+      // return; instead, synthesize a `⚠️` bubble, drop the streaming
+      // dots, and tell the parent the chat is no longer running. The relay
+      // also persists the same synthetic message to chats-storage, so on
+      // a cold reload the bubble is already there.
+      if (state === "error" || state === "aborted") {
+        const errMsg = typeof p.errorMessage === "string" ? p.errorMessage.trim() : "";
+        const reason = errMsg || (state === "aborted" ? "Run aborted before completing." : "Unknown error.");
+        const header = state === "aborted" ? "⚠️ Run stopped" : "⚠️ Run failed";
+        const body = `${header}\n\n${reason}\n\n_(The agent didn't produce a reply. If this keeps happening with the same chat, the conversation history may be too large — start a fresh chat.)_`;
+        setItems((prev) => {
+          const bubbleId = runId ? streamMapRef.current.get(runId) : undefined;
+          if (bubbleId) {
+            return prev.map((it) =>
+              it.kind === "message" && it.message.id === bubbleId
+                ? { kind: "message" as const, message: { ...it.message, text: body, streaming: false, createdMs: Date.now() } }
+                : it,
+            );
+          }
+          return [
+            ...prev,
+            {
+              kind: "message" as const,
+              message: { id: newId(), role: "assistant", text: body, streaming: false, createdMs: Date.now() },
+            },
+          ];
+        });
+        setPending(false);
+        if (chatStatus === "running") {
+          onChatStatus?.(chatId, "done");
+        }
+        if (runId) {
+          setTimeout(() => streamMapRef.current.delete(runId), 1000);
+        }
+        return;
+      }
+
       if (role !== "assistant") return;
 
       setItems((prev) => {
@@ -965,24 +1065,13 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
             noteOwnPersist,
           });
         }
-        // Persist the final assistant text so it survives reload.
-        if (text) {
-          void client
-            .call<{ message?: { id?: string } }>("clawhq.chats.append", {
-              chatId,
-              role: "assistant",
-              content: text,
-            })
-            .then((result) => {
-              if (result?.message?.id) noteOwnPersist(result.message.id);
-            })
-            .catch((e) => {
-              console.warn("clawhq.chats.append (assistant) failed:", e);
-            });
-        }
-        // HUD persistence moved to the `agent` lifecycle-end listener below
-        // (that's where usage / cost / context tokens actually arrive). The
-        // chat-final event no longer carries this data in current OpenClaw.
+        // Assistant-final persist is now handled by ChatApp's global
+        // chat-event listener so it survives the user navigating to another
+        // chat mid-response. See ChatApp.tsx — the listener calls
+        // clawhq.chats.append for every clawhq-pattern session-key, not
+        // just the one currently mounted.
+        // HUD persistence still moved to the `agent` lifecycle-end listener
+        // below (that's where usage / cost / context tokens actually arrive).
         if (runId) {
           setTimeout(() => streamMapRef.current.delete(runId), 1000);
         }
@@ -1325,6 +1414,22 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
         }
         setItems((prev) => {
           if (prev.some((it) => it.kind === "message" && it.message.id === msg.id)) return prev;
+          // The ChatApp-level global persist now writes the assistant final
+          // (so it survives navigating away mid-response). That broadcast
+          // arrives here with the plugin's UUID — different from the local
+          // streamMap-generated bubble id. Skip the inbound copy if the same
+          // assistant text already lives in items.
+          if (
+            msg.role === "assistant"
+            && prev.some(
+              (it) =>
+                it.kind === "message"
+                && it.message.role === "assistant"
+                && it.message.text === msg.content,
+            )
+          ) {
+            return prev;
+          }
           return [
             ...prev,
             {
@@ -1581,24 +1686,77 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     if (e.dataTransfer?.files?.length) void addFiles(e.dataTransfer.files);
   };
 
-  // Thinking indicator: between Send and the first response activity (text
-  // delta, tool start, approval, or question), show the three-dot pulse. Once
-  // anything has been appended after the last user message, the agent is
-  // visibly responding and the dots would be redundant.
-  const showThinking = (() => {
-    if (!pending || items.length === 0) return false;
-    const last = items[items.length - 1];
-    return last !== undefined && last.kind === "message" && last.message.role === "user";
-  })();
+  // Thinking indicator. Jesse's spec: dots reflect *live* agent state, not a
+  // sticky run flag. Concretely:
+  //   - thinking → dots on
+  //   - tunnel/gateway disconnected → dots off (run may still be running on
+  //     the server, but from the SPA's point of view it can't see it, so don't
+  //     pretend)
+  //   - tunnel reconnects with run still active → dots come back (the
+  //     sessions.list reconcile below repolls on every status→ready and flips
+  //     chatStatus back to "running" if the upstream session still has an
+  //     active run)
+  //   - response final → dots off
+  // The parent ChatApp owns chatStatus so it survives this component's
+  // unmount (switching chats mid-run); local `pending` covers the brief
+  // window between Send and the first server roundtrip.
+  const showThinking =
+    status.kind === "ready" &&
+    (chatStatus === "running" || (pending && chatStatus !== "done"));
 
   const toolItems = useMemo(
     () => items.flatMap((it) => (it.kind === "tool" ? [it.tool] : [])),
     [items],
   );
 
+  /**
+   * Visible items = last `visibleCount` entries. Cheap O(1) array view —
+   * skips reconciling the 14k+ older messages on huge chats. Keyed by
+   * itemKey so React reuses DOM across input changes.
+   */
+  const visibleItems = useMemo(
+    () => (items.length > visibleCount ? items.slice(-visibleCount) : items),
+    [items, visibleCount],
+  );
+  const hiddenCount = Math.max(0, items.length - visibleItems.length);
+
+  // Large-chat banner: dismissal is per-chat per-session (a different chatId
+  // dismisses independently; reloading the app re-shows the banner). Resets
+  // automatically when the user navigates to a different chat because the
+  // component remounts on chatId change.
+  const [largeChatDismissed, setLargeChatDismissed] = useState(false);
+  const messageCount = items.length;
+  const showLargeChatBanner =
+    !largeChatDismissed
+    && messageCount >= LARGE_CHAT_BANNER_THRESHOLD
+    && !!onArchiveAndStartFresh;
+
   return (
     <div className="chat-swipe-wrap">
     <div className="chat-shell">
+      {showLargeChatBanner && (
+        <div className="chat-large-banner">
+          <div className="chat-large-banner-text">
+            This chat has {messageCount.toLocaleString()} messages. Large chats can stall the agent. Archive it and start fresh?
+          </div>
+          <div className="chat-large-banner-actions">
+            <button
+              type="button"
+              className="chat-large-banner-primary"
+              onClick={() => onArchiveAndStartFresh?.(chatId)}
+            >
+              Archive &amp; start new
+            </button>
+            <button
+              type="button"
+              className="chat-large-banner-dismiss"
+              onClick={() => setLargeChatDismissed(true)}
+            >
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
       <div
         className={`message-list ${dragOver ? "drag-over" : ""}`}
         ref={listRef}
@@ -1619,7 +1777,19 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
             {projectSlug ? <> — project context for <code>{projectSlug}</code> will be attached.</> : null}
           </div>
         )}
-        {items.map((it) => {
+        {hiddenCount > 0 && (
+          <div className="chat-show-earlier-row">
+            <button
+              type="button"
+              className="chat-show-earlier"
+              onClick={() => setVisibleCount((v) => v + 200)}
+              title={`Render ${Math.min(200, hiddenCount)} older messages — ${hiddenCount} hidden`}
+            >
+              Show earlier ({hiddenCount} older)
+            </button>
+          </div>
+        )}
+        {visibleItems.map((it) => {
           if (it.kind === "tool") {
             // On mobile the tool blocks live in the swipe-right terminal pane
             // so the chat reads as a clean conversation; desktop keeps them
@@ -1658,20 +1828,11 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
             );
           }
           return (
-            <div
+            <MessageBubble
               key={itemKey(it)}
-              data-message-id={m.id}
-              className={`bubble ${m.role}`}
-            >
-              <BubbleContent text={m.text} highlight={initialSearchQuery} />
-              {m.streaming && <span className="streaming-caret" aria-hidden="true" />}
-              {!m.streaming && m.role === "assistant" && m.hud && (
-                <BubbleHudFooter hud={m.hud} />
-              )}
-              {!m.streaming && m.createdMs && (
-                <div className="bubble-timestamp">{formatBubbleTimestamp(m.createdMs)}</div>
-              )}
-            </div>
+              message={m}
+              highlight={initialSearchQuery}
+            />
           );
         })}
         {showThinking && (
@@ -1690,6 +1851,32 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
           <div className="composer-history-picker">
             <div className="composer-history-picker-head">
               <strong>Re-attach from chat history</strong>
+              <div className="composer-history-picker-viewtoggle" role="tablist" aria-label="Layout">
+                <button
+                  type="button"
+                  className={`composer-history-picker-viewbtn ${historyViewMode === "list" ? "active" : ""}`}
+                  onClick={() => setHistoryViewMode("list")}
+                  title="List view"
+                  role="tab"
+                  aria-selected={historyViewMode === "list"}
+                >☰</button>
+                <button
+                  type="button"
+                  className={`composer-history-picker-viewbtn ${historyViewMode === "grid4" ? "active" : ""}`}
+                  onClick={() => setHistoryViewMode("grid4")}
+                  title="4-up grid"
+                  role="tab"
+                  aria-selected={historyViewMode === "grid4"}
+                >▦</button>
+                <button
+                  type="button"
+                  className={`composer-history-picker-viewbtn ${historyViewMode === "grid1" ? "active" : ""}`}
+                  onClick={() => setHistoryViewMode("grid1")}
+                  title="Single card preview"
+                  role="tab"
+                  aria-selected={historyViewMode === "grid1"}
+                >▢</button>
+              </div>
               <button
                 type="button"
                 className="composer-history-picker-close"
@@ -1702,31 +1889,61 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
                 No prior uploads in this chat yet.
               </div>
             ) : (
-              <ul className="composer-history-picker-list">
+              <ul className={`composer-history-picker-list mode-${historyViewMode}`}>
                 {historyAttachments.map((h) => {
                   const alreadyOn = activeUploadIds.has(h.uploadId);
+                  if (historyViewMode === "list") {
+                    return (
+                      <li key={h.uploadId}>
+                        <button
+                          type="button"
+                          className="composer-history-picker-row"
+                          disabled={alreadyOn || status.kind !== "ready"}
+                          onClick={() => void addHistoryAttachment(h)}
+                        >
+                          <img
+                            src={h.url}
+                            alt=""
+                            className="composer-history-picker-thumb"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                          <span className="composer-history-picker-name" title={h.filename}>
+                            {h.filename}
+                          </span>
+                          {alreadyOn && (
+                            <span className="composer-history-picker-on">attached</span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  }
+                  // grid4 / grid1 — card layout with the image on top, name below.
                   return (
                     <li key={h.uploadId}>
                       <button
                         type="button"
-                        className="composer-history-picker-row"
+                        className="composer-history-picker-card"
                         disabled={alreadyOn || status.kind !== "ready"}
                         onClick={() => void addHistoryAttachment(h)}
                       >
-                        <img
-                          src={h.url}
-                          alt=""
-                          className="composer-history-picker-thumb"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = "none";
-                          }}
-                        />
-                        <span className="composer-history-picker-name" title={h.filename}>
+                        <div className="composer-history-picker-card-imgwrap">
+                          <img
+                            src={h.url}
+                            alt=""
+                            className="composer-history-picker-card-img"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                          {alreadyOn && (
+                            <span className="composer-history-picker-card-on">attached</span>
+                          )}
+                        </div>
+                        <span className="composer-history-picker-card-name" title={h.filename}>
                           {h.filename}
                         </span>
-                        {alreadyOn && (
-                          <span className="composer-history-picker-on">attached</span>
-                        )}
                       </button>
                     </li>
                   );
@@ -1821,11 +2038,11 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
                 type="button"
                 className={`composer-attach composer-history-trigger ${showHistoryPicker ? "active" : ""}`}
                 aria-label="Attach from history"
-                title={`Re-attach (${historyAttachments.length} prior)`}
+                title={`Re-attach from chat history (${historyAttachments.length} prior)`}
                 disabled={status.kind !== "ready" || pending}
                 onClick={() => setShowHistoryPicker((v) => !v)}
               >
-                <Clipboard size={14} /><span className="composer-history-trigger-badge">{historyAttachments.length}</span>
+                <Clipboard size={14} />
               </button>
             )}
             <div className="composer-model-wrap">
@@ -1995,7 +2212,7 @@ function formatToolValue(v: unknown): string {
   }
 }
 
-function ToolBlock({ tool }: { tool: DisplayTool }) {
+const ToolBlock = React.memo(function ToolBlock({ tool }: { tool: DisplayTool }) {
   const [open, setOpen] = useState(false);
   const statusClass =
     tool.status === "done" ? "ok" : tool.status === "error" ? "bad" : "warn";
@@ -2069,7 +2286,7 @@ function ToolBlock({ tool }: { tool: DisplayTool }) {
       )}
     </div>
   );
-}
+});
 
 function DiffHeaderStats({ edits }: { edits: ParsedFileEdit[] }) {
   const totals = useMemo(() => {
@@ -2177,7 +2394,7 @@ function DiffFile({ edit, index }: { edit: ParsedFileEdit; index?: number }) {
   );
 }
 
-function QuestionBlock({
+const QuestionBlock = React.memo(function QuestionBlock({
   question,
   onAnswer,
   disabled,
@@ -2219,9 +2436,9 @@ function QuestionBlock({
       )}
     </div>
   );
-}
+});
 
-function ApprovalBlock({
+const ApprovalBlock = React.memo(function ApprovalBlock({
   approval,
   onResolve,
 }: {
@@ -2275,7 +2492,7 @@ function ApprovalBlock({
       ) : null}
     </div>
   );
-}
+});
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2344,7 +2561,36 @@ function BubbleHudFooter({ hud }: { hud: { body: string; ctxPct: number | null }
   );
 }
 
-function SystemRow({ id, text, highlight }: { id: string; text: string; highlight?: string }) {
+/**
+ * Memoized chat bubble for user/assistant messages. Wrapping in React.memo
+ * means a keystroke in the composer (which is a sibling state update on the
+ * parent) doesn't trigger BubbleContent's markdown re-parse for every
+ * already-rendered bubble. Custom equality compares the fields we actually
+ * render so identity-stable parent re-renders skip.
+ */
+const MessageBubble = React.memo(
+  function MessageBubble({ message, highlight }: { message: DisplayMessage; highlight?: string }) {
+    return (
+      <div
+        data-message-id={message.id}
+        className={`bubble ${message.role}`}
+      >
+        <BubbleContent text={message.text} highlight={highlight} />
+        {message.streaming && <span className="streaming-caret" aria-hidden="true" />}
+        {!message.streaming && message.role === "assistant" && message.hud && (
+          <BubbleHudFooter hud={message.hud} />
+        )}
+        {!message.streaming && message.createdMs && (
+          <div className="bubble-timestamp">{formatBubbleTimestamp(message.createdMs)}</div>
+        )}
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.message === next.message && prev.highlight === next.highlight,
+);
+
+const SystemRow = React.memo(function SystemRow({ id, text, highlight }: { id: string; text: string; highlight?: string }) {
   const hud = parseHud(text);
   if (!hud) {
     // Non-HUD system rows (errors, approval markers, free-form notes) — centered,
@@ -2379,7 +2625,7 @@ function SystemRow({ id, text, highlight }: { id: string; text: string; highligh
       )}
     </div>
   );
-}
+});
 
 type InlinePart =
   | { kind: "text"; text: string }

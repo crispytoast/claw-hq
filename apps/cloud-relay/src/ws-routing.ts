@@ -114,6 +114,41 @@ function notificationForFrame(envelope: TunnelEnvelope):
     };
   }
 
+  // Failure path: the OpenClaw embedded-backend emits state="error" with an
+  // optional errorMessage when a run blows up before producing a reply (e.g.
+  // FailoverError, context overflow, CLI output cap), and state="aborted"
+  // when a run terminates without producing one. Without this hook the user
+  // saw nothing — thinking dots forever, no push, no chat entry. Both states
+  // get the same UX as a successful reply: push + persisted synthetic
+  // assistant message.
+  if (frame.event === "chat" && (payload.state === "error" || payload.state === "aborted")) {
+    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : "";
+    if (!sessionKey) return null;
+    const scoped = sessionKey.match(CLAWHQ_SESSION_RE);
+    const scopePrefix = scoped?.[1] ?? "";
+    const chatIdPrefix = scoped?.[2] ?? "";
+    const errMsg = typeof payload.errorMessage === "string" ? payload.errorMessage.trim() : "";
+    const reason = errMsg || (payload.state === "aborted" ? "Run aborted." : "Unknown error.");
+    const body = reason.length > 120 ? reason.slice(0, 117) + "..." : reason;
+    const title = payload.state === "aborted" ? "Agent run stopped" : "Agent run failed";
+    if (chatIdPrefix) {
+      return {
+        title,
+        body,
+        kind: payload.state === "aborted" ? "chat.aborted" : "chat.error",
+        deepLink: `/chat-detail/${chatIdPrefix}`,
+        data: { chatIdPrefix, sessionKey, scope: scopePrefix, state: String(payload.state) },
+      };
+    }
+    return {
+      title,
+      body,
+      kind: payload.state === "aborted" ? "agent.aborted" : "agent.error",
+      deepLink: `/chat/${sessionKey}`,
+      data: { sessionKey, state: String(payload.state) },
+    };
+  }
+
   if (frame.event === "exec.approval.requested") {
     const cmd = typeof data.command === "string" ? data.command : "Command";
     return {
@@ -149,22 +184,40 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
     return row?.user_id ?? "owner";
   }
 
-  function maybePersistAssistantFinal(envelope: TunnelEnvelope): void {
+  function maybePersistChatTerminal(envelope: TunnelEnvelope): void {
     if (envelope.kind !== "frame") return;
     const frame = envelope.frame;
     if (frame.type !== "event" || frame.event !== "chat") return;
     const payload = (frame.payload ?? {}) as Record<string, unknown>;
-    if (payload.state !== "final") return;
+    const state = payload.state;
+    if (state !== "final" && state !== "error" && state !== "aborted") return;
     const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : "";
     if (!sessionKey) return;
     const scoped = sessionKey.match(CLAWHQ_SESSION_RE);
     const chatIdPrefix = scoped?.[2] ?? "";
     if (!chatIdPrefix) return;
-    const messageObj = (payload.message ?? null) as Record<string, unknown> | null;
-    const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "";
-    if (role !== "assistant") return;
-    const content = messageObj ? frameToText(messageObj.content).trim() : "";
-    if (!content) return;
+
+    let content = "";
+    let label = "";
+    if (state === "final") {
+      const messageObj = (payload.message ?? null) as Record<string, unknown> | null;
+      const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "";
+      if (role !== "assistant") return;
+      content = messageObj ? frameToText(messageObj.content).trim() : "";
+      if (!content) return;
+      label = "assistant final";
+    } else {
+      // Synthesize a `⚠️` assistant bubble so the user sees the failure when
+      // they open the chat, instead of dots-spinning-forever. Uses
+      // `role: "assistant"` so it renders with no SPA changes; the prefix
+      // distinguishes it visually.
+      const errMsg = typeof payload.errorMessage === "string" ? payload.errorMessage.trim() : "";
+      const reason = errMsg || (state === "aborted" ? "Run aborted before completing." : "Unknown error.");
+      const header = state === "aborted" ? "⚠️ Run stopped" : "⚠️ Run failed";
+      content = `${header}\n\n${reason}\n\n_(The agent didn't produce a reply. If this keeps happening with the same chat, the conversation history may be too large — start a fresh chat.)_`;
+      label = `synthetic ${state}`;
+    }
+
     // chatId prefix is 8 chars; we need the full id to find the file. The
     // SPA already resolves prefix→full via clawhq.chats.list. Walk the chats
     // directory to find the unique chat whose id starts with the prefix.
@@ -173,7 +226,7 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
         if (!chatId) return;
         const res = await appendAssistantFinalIfNew({ chatId, content });
         if (res.appended) {
-          console.log(`[chats] server-side appended assistant final to ${chatId.slice(0, 8)} (offline client)`);
+          console.log(`[chats] server-side appended ${label} to ${chatId.slice(0, 8)} (offline client)`);
         }
       })
       .catch((err) => {
@@ -203,6 +256,16 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
       const tag = id ?? `c:${fallback}`;
       return `${sessionKey}::chat::${tag}`;
     }
+    if (f.event === "chat" && (p.state === "error" || p.state === "aborted")) {
+      // Failure path: dedup on runId when present (every emitted terminal
+      // event carries one), else fall back to errorMessage so a missing
+      // runId still collapses repeats. State is in the key so an error→
+      // retry→final sequence won't suppress the eventual final.
+      const runId = typeof p.runId === "string" ? p.runId : null;
+      const errMsg = typeof p.errorMessage === "string" ? p.errorMessage.slice(0, 200) : "";
+      const tag = runId ?? `e:${errMsg}`;
+      return `${sessionKey}::${String(p.state)}::${tag}`;
+    }
     if (f.event === "exec.approval.requested") {
       const data = (p.data ?? {}) as Record<string, unknown>;
       const id = typeof data.approvalId === "string" ? data.approvalId : null;
@@ -211,6 +274,195 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
     }
     return null;
   }
+
+  // ----- Stuck-run watchdog -----------------------------------------
+  // Belt-and-suspenders for failure modes where an OpenClaw run dies but
+  // doesn't emit a terminal chat event (e.g. CLI stdout cap blowing up the
+  // turn before reply-turn-admission gets a chance to compose a fallback
+  // final). Without this, the SPA's thinking dots spin forever, no push
+  // fires, no chat bubble lands — exactly the failure Frank hit on
+  // 2026-06-18 morning.
+  //
+  // We track per-sessionKey the wall-clock of the last agent-to-client
+  // frame. Any activity (delta, tool start/end, etc.) bumps it. Terminal
+  // states clear it. A sweeper checks every minute: if a session's
+  // lastActivityMs is older than RUN_STUCK_IDLE_MS, we synthesize a
+  // chat:error envelope and feed it through the same handlers — push goes
+  // out, ⚠️ bubble lands in the chat file, SPA dots stop, sidebar dot
+  // flips to "done".
+  interface RunWatch {
+    sessionKey: string;
+    lastActivityMs: number;
+    /** Last runId observed on a frame for this session, propagated into
+     *  the synthetic terminal so per-runId dedup keys line up. */
+    lastRunId?: string;
+    /** Number of automatic retries already attempted for this turn.
+     *  Capped at MAX_AUTO_RETRIES so a deterministic failure mode
+     *  (e.g. context overflow) doesn't loop forever. */
+    retryCount: number;
+    /** Cached client-to-agent chat.send envelope. Replayed verbatim on
+     *  stall (with a fresh req id). Cleared on terminal so we don't
+     *  retry a turn that already finished. */
+    lastPromptEnvelope?: TunnelEnvelope;
+    /** The clientId we use to replay — preferred is the original
+     *  client's id, falling back to any currently-connected client. */
+    lastClientId?: string;
+  }
+  const runWatch = new Map<string, RunWatch>();
+  const MAX_AUTO_RETRIES = 1;
+  /** Frank's bar: "I need to be able to send a prompt and forget about it
+   *  until I get the push notification." 10 min of total radio silence on
+   *  an active run is well past any normal work window. */
+  const RUN_STUCK_IDLE_MS = 10 * 60_000;
+  const RUN_WATCHDOG_CHECK_MS = 60_000;
+
+  function watchdogArmFromClient(envelope: TunnelEnvelope): void {
+    if (envelope.kind !== "frame" || envelope.direction !== "client-to-agent") return;
+    const frame = envelope.frame;
+    if (frame.type !== "req") return;
+    // Chat sends ride one of two methods depending on SPA path. Match
+    // both; ignore everything else (RPC/tool calls don't arm a turn).
+    if (frame.method !== "chat.send" && frame.method !== "sessions.messages.send") return;
+    const params = (frame.params ?? {}) as Record<string, unknown>;
+    const sessionKey =
+      typeof params.sessionKey === "string"
+        ? params.sessionKey
+        : typeof params.key === "string"
+        ? params.key
+        : "";
+    if (!sessionKey || !CLAWHQ_SESSION_RE.test(sessionKey)) return;
+    const existing = runWatch.get(sessionKey);
+    if (existing) {
+      existing.lastActivityMs = Date.now();
+      existing.lastPromptEnvelope = envelope;
+      existing.lastClientId = envelope.clientId;
+      // Fresh user turn — reset retry budget. A real new prompt from the
+      // user always gets a fresh single-retry allowance regardless of
+      // whether prior turns burned theirs.
+      existing.retryCount = 0;
+    } else {
+      runWatch.set(sessionKey, {
+        sessionKey,
+        lastActivityMs: Date.now(),
+        retryCount: 0,
+        lastPromptEnvelope: envelope,
+        lastClientId: envelope.clientId,
+      });
+    }
+  }
+
+  function watchdogTouch(envelope: TunnelEnvelope): void {
+    if (envelope.kind !== "frame" || envelope.direction !== "agent-to-client") return;
+    const frame = envelope.frame;
+    if (frame.type !== "event") return;
+    const payload = (frame.payload ?? {}) as Record<string, unknown>;
+    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : "";
+    if (!sessionKey) return;
+    // Only watch clawhq-scoped sessions; raw OpenClaw sessions don't have
+    // a chat-id prefix and can't be deep-linked from a push.
+    if (!CLAWHQ_SESSION_RE.test(sessionKey)) return;
+
+    // Terminal states clear the tracker — the run finished cleanly (or via
+    // our earlier error/aborted wiring).
+    if (frame.event === "chat" && (payload.state === "final" || payload.state === "error" || payload.state === "aborted")) {
+      runWatch.delete(sessionKey);
+      return;
+    }
+
+    const runId = typeof payload.runId === "string" ? payload.runId : undefined;
+    const existing = runWatch.get(sessionKey);
+    if (existing) {
+      existing.lastActivityMs = Date.now();
+      if (runId) existing.lastRunId = runId;
+    } else {
+      runWatch.set(sessionKey, {
+        sessionKey,
+        lastActivityMs: Date.now(),
+        retryCount: 0,
+        ...(runId ? { lastRunId: runId } : {}),
+      });
+    }
+  }
+
+  /** Replay the cached chat.send envelope as a fresh turn. Returns true
+   *  if the retry was actually attempted (envelope cached + agent attached),
+   *  false if we can't retry and should fail loud instead. */
+  function attemptStallRetry(watch: RunWatch): boolean {
+    if (!watch.lastPromptEnvelope) return false;
+    if (watch.retryCount >= MAX_AUTO_RETRIES) return false;
+    if (!state.agent || state.agent.readyState !== 1) return false;
+    const original = watch.lastPromptEnvelope;
+    if (original.kind !== "frame" || original.frame.type !== "req") return false;
+
+    // Reuse the original client's gateway session if it's still attached.
+    // Otherwise fall back to any currently-connected client so the tunnel
+    // can route. (Tunnel-agent's orphan-pool keeps gateway sessions alive
+    // across SPA reconnects, so a stale clientId may still have a live
+    // gateway session bound to the same OpenClaw sessionKey.)
+    let clientIdForReplay = watch.lastClientId ?? "";
+    if (!state.clients.has(clientIdForReplay)) {
+      const anyClientId = state.clients.keys().next().value;
+      if (typeof anyClientId === "string") clientIdForReplay = anyClientId;
+    }
+    if (!clientIdForReplay) return false;
+
+    const replayed: TunnelEnvelope = {
+      ...original,
+      clientId: clientIdForReplay,
+      frame: {
+        ...original.frame,
+        // Fresh req id so OpenClaw doesn't dedup against the dead request.
+        id: `retry-${randomUUID()}`,
+      },
+    };
+    watch.retryCount += 1;
+    watch.lastActivityMs = Date.now();
+    console.warn(`[watchdog] auto-retry #${watch.retryCount} for ${watch.sessionKey} via clientId=${clientIdForReplay}`);
+    sendEnvelope(state.agent, replayed);
+    return true;
+  }
+
+  function synthesizeStuckRunFailure(watch: RunWatch): void {
+    // Try the silent recovery path first. If retry kicks in, the watchdog
+    // timer is reset and we'll re-check in another 10 min.
+    if (attemptStallRetry(watch)) return;
+
+    const retryNote = watch.retryCount > 0
+      ? ` Already auto-retried ${watch.retryCount}× without success — this looks like a deterministic failure (likely the chat is too large, or OpenClaw is in a bad state). Start a fresh chat or restart OpenClaw.`
+      : "";
+    const synth: TunnelEnvelope = {
+      kind: "frame",
+      // Synthetic; not addressed to any one client — broadcast below.
+      clientId: "watchdog",
+      direction: "agent-to-client",
+      frame: {
+        type: "event",
+        event: "chat",
+        payload: {
+          sessionKey: watch.sessionKey,
+          state: "error",
+          errorMessage: `Agent run timed out — no output for 10 minutes.${retryNote}`,
+          ...(watch.lastRunId ? { runId: watch.lastRunId } : {}),
+        },
+      },
+    };
+    console.warn(`[watchdog] giving up on ${watch.sessionKey} after ${watch.retryCount} retries — synthesizing chat:error`);
+    maybeFirePushFromFrame(synth);
+    maybePersistChatTerminal(synth);
+    for (const client of state.clients.values()) {
+      if (client.readyState === 1) client.send(JSON.stringify(synth));
+    }
+    runWatch.delete(watch.sessionKey);
+  }
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const watch of runWatch.values()) {
+      if (now - watch.lastActivityMs >= RUN_STUCK_IDLE_MS) {
+        synthesizeStuckRunFailure(watch);
+      }
+    }
+  }, RUN_WATCHDOG_CHECK_MS).unref();
 
   function maybeFirePushFromFrame(envelope: TunnelEnvelope): void {
     if (!state.agentOwnerId) return;
@@ -313,22 +565,23 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
           if (delivered) {
             client.send(JSON.stringify(envelope));
           }
+          watchdogTouch(envelope);
           maybeFirePushFromFrame(envelope);
-          // Server-side safety net: if NO SPA client is connected at all,
-          // persist the assistant message ourselves so the SPA can render
-          // it on next reload. Without this, a phone that locked mid-
-          // response would never see the reply because the SPA's own
-          // clawhq.chats.append never ran.
+          // Server-side persistence is unconditional. appendAssistantFinalIfNew
+          // is file-locked and content-deduped, so a concurrent SPA-side append
+          // is safe — the second writer sees "duplicate" and no-ops.
           //
-          // We deliberately check `state.clients.size === 0` (not just the
-          // envelope's own clientId) because orphan-pool gateway sessions
-          // emit envelopes whose original clientId is no longer in the
-          // routing map — but a freshly-reconnected SPA holds a DIFFERENT
-          // clientId that's actively persisting. Skipping when any client
-          // is online avoids racing two writers to the chat file.
-          if (state.clients.size === 0) {
-            maybePersistAssistantFinal(envelope);
-          }
+          // Previously we gated this on `state.clients.size === 0`, but that
+          // dropped the assistant-final whenever the SPA was open on a
+          // different chat OR had reconnected with a fresh clientId after the
+          // orphan-pool session was minted. The original clientId on the
+          // envelope is then stale, `client.send` above goes nowhere, and the
+          // SPA's clawhq.chats.append never runs — so the reply evaporated.
+          //
+          // Also handles state="error"/"aborted" terminals — those land a
+          // synthetic `⚠️ Run failed` assistant bubble so the user sees the
+          // failure when they next open the chat.
+          maybePersistChatTerminal(envelope);
           return;
         }
 
@@ -393,6 +646,11 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
           if (state.agent && state.agent.readyState === 1) {
             state.agent.send(JSON.stringify(tagged));
           }
+          // Arm the watchdog the moment a user prompt leaves the relay,
+          // even before OpenClaw acks. Otherwise a turn that dies before
+          // emitting any frame (rare, but possible — auth failure, queue
+          // overflow, etc.) would never arm the agent-side timer.
+          watchdogArmFromClient(envelope);
           return;
         }
 

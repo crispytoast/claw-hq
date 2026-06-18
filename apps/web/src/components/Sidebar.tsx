@@ -79,6 +79,8 @@ interface ChatSummary {
   createdMs: number;
   updatedMs: number;
   messageCount: number;
+  archived?: boolean;
+  archivedAt?: number;
 }
 
 interface ChatsListResponse {
@@ -188,6 +190,11 @@ export function Sidebar({
   const [projectChats, setProjectChats] = useState<Map<string, ChatSummary[]>>(new Map());
   const [projectChatsLoading, setProjectChatsLoading] = useState<Set<string>>(new Set());
   const [projectChatsErr, setProjectChatsErr] = useState<Map<string, string>>(new Map());
+  // Per-project archived chats — loaded lazily when the user expands the
+  // "Archived (N)" row under a project. Same shape as projectChats.
+  const [projectArchivedChats, setProjectArchivedChats] = useState<Map<string, ChatSummary[]>>(new Map());
+  const [projectArchivedLoading, setProjectArchivedLoading] = useState<Set<string>>(new Set());
+  const [expandedArchivedFor, setExpandedArchivedFor] = useState<Set<string>>(new Set());
   /** chatId whose row actions popover is open. */
   const [actionsOpenForChat, setActionsOpenForChat] = useState<string | null>(null);
   /** chatId currently being inline-renamed, with its draft title. */
@@ -269,6 +276,43 @@ export function Sidebar({
     });
   }
 
+  const loadProjectArchivedChats = useCallback(
+    async (projectId: string) => {
+      if (!client || status.kind !== "ready") return;
+      setProjectArchivedLoading((s) => new Set(s).add(projectId));
+      try {
+        const data = await client.call<ChatsListResponse>(
+          "clawhq.chats.list",
+          { projectSlug: projectId, includeArchived: "only" },
+        );
+        setProjectArchivedChats((m) => new Map(m).set(projectId, data.chats ?? []));
+      } catch (err) {
+        console.warn(`clawhq.chats.list (archived for ${projectId}) failed:`, err);
+        setProjectArchivedChats((m) => new Map(m).set(projectId, []));
+      } finally {
+        setProjectArchivedLoading((s) => {
+          const next = new Set(s);
+          next.delete(projectId);
+          return next;
+        });
+      }
+    },
+    [client, status.kind],
+  );
+
+  function toggleArchivedFor(projectId: string) {
+    setExpandedArchivedFor((s) => {
+      const next = new Set(s);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+        if (!projectArchivedChats.has(projectId)) void loadProjectArchivedChats(projectId);
+      }
+      return next;
+    });
+  }
+
   const commitRename = useCallback(async () => {
     if (!client || status.kind !== "ready" || !renamingChat) return;
     const { chatId, draft } = renamingChat;
@@ -294,6 +338,31 @@ export function Sidebar({
       console.warn("clawhq.chats.rename failed:", err);
     }
   }, [client, status.kind, renamingChat]);
+
+  const archiveChatRow = useCallback(
+    async (chatId: string) => {
+      if (!client || status.kind !== "ready") return;
+      try {
+        await client.call("clawhq.chats.archive", { chatId, archived: true });
+        // Broadcast handler updates lists; nothing else needed here.
+      } catch (err) {
+        console.warn("clawhq.chats.archive failed:", err);
+      }
+    },
+    [client, status.kind],
+  );
+
+  const restoreChatRow = useCallback(
+    async (chatId: string) => {
+      if (!client || status.kind !== "ready") return;
+      try {
+        await client.call("clawhq.chats.archive", { chatId, archived: false });
+      } catch (err) {
+        console.warn("clawhq.chats.archive (restore) failed:", err);
+      }
+    },
+    [client, status.kind],
+  );
 
   const deleteChatRow = useCallback(
     async (chatId: string, title: string) => {
@@ -435,6 +504,70 @@ export function Sidebar({
           next.sort((a, b) => b.updatedMs - a.updatedMs);
           return new Map(m).set(projectSlug, next);
         });
+        return;
+      }
+      if (ev.event === "plugin.clawhq.chat.archived") {
+        const p = (ev.payload ?? {}) as {
+          chatId?: unknown;
+          projectSlug?: unknown;
+          archived?: unknown;
+          archivedAt?: unknown;
+        };
+        if (typeof p.chatId !== "string") return;
+        const chatId = p.chatId;
+        const projectSlug = typeof p.projectSlug === "string" ? p.projectSlug : null;
+        const archived = p.archived === true;
+        const archivedAt = typeof p.archivedAt === "number" ? p.archivedAt : Date.now();
+        if (archived) {
+          // Move active → archived for that project.
+          let moved: ChatSummary | null = null;
+          setProjectChats((m) => {
+            const next = new Map(m);
+            for (const [slug, list] of m) {
+              const idx = list.findIndex((c) => c.id === chatId);
+              if (idx === -1) continue;
+              moved = { ...list[idx]!, archived: true, archivedAt };
+              next.set(slug, [...list.slice(0, idx), ...list.slice(idx + 1)]);
+              if (projectSlug == null && moved) (moved as ChatSummary).projectSlug = slug;
+            }
+            return next;
+          });
+          if (moved && projectSlug) {
+            setProjectArchivedChats((m) => {
+              const list = m.get(projectSlug);
+              if (!list) return m;
+              if (list.some((c) => c.id === chatId)) return m;
+              const next = [moved!, ...list];
+              next.sort((a, b) => (b.archivedAt ?? b.updatedMs) - (a.archivedAt ?? a.updatedMs));
+              return new Map(m).set(projectSlug, next);
+            });
+          }
+        } else {
+          // Restored: archived → active.
+          let moved: ChatSummary | null = null;
+          setProjectArchivedChats((m) => {
+            const next = new Map(m);
+            for (const [slug, list] of m) {
+              const idx = list.findIndex((c) => c.id === chatId);
+              if (idx === -1) continue;
+              moved = { ...list[idx]! };
+              delete (moved as ChatSummary).archived;
+              delete (moved as ChatSummary).archivedAt;
+              next.set(slug, [...list.slice(0, idx), ...list.slice(idx + 1)]);
+            }
+            return next;
+          });
+          if (moved && projectSlug) {
+            setProjectChats((m) => {
+              const list = m.get(projectSlug);
+              if (!list) return m;
+              if (list.some((c) => c.id === chatId)) return m;
+              const next = [moved!, ...list];
+              next.sort((a, b) => b.updatedMs - a.updatedMs);
+              return new Map(m).set(projectSlug, next);
+            });
+          }
+        }
         return;
       }
     });
@@ -921,6 +1054,15 @@ export function Sidebar({
                                           <button
                                             onClick={() => {
                                               setActionsOpenForChat(null);
+                                              void archiveChatRow(c.id);
+                                            }}
+                                          >
+                                            Archive
+                                          </button>
+                                          <div className="sep" />
+                                          <button
+                                            onClick={() => {
+                                              setActionsOpenForChat(null);
                                               void deleteChatRow(c.id, c.title);
                                             }}
                                           >
@@ -938,6 +1080,96 @@ export function Sidebar({
                               ) : (
                                 <div className="cl-list-empty">No chats yet.</div>
                               )}
+                              {(() => {
+                                const archived = projectArchivedChats.get(p.id);
+                                const archivedExpanded = expandedArchivedFor.has(p.id);
+                                const archivedLoading = projectArchivedLoading.has(p.id);
+                                // Hide entirely when we know the list is empty
+                                // (loaded + zero items) to avoid clutter.
+                                if (archived && archived.length === 0 && !archivedExpanded) {
+                                  return null;
+                                }
+                                return (
+                                  <div className="cl-project-archive">
+                                    <button
+                                      type="button"
+                                      className="cl-project-archive-toggle"
+                                      onClick={() => toggleArchivedFor(p.id)}
+                                    >
+                                      <Chevron dir={archivedExpanded ? "down" : "right"} size={10} />
+                                      <span>Archived{archived ? ` (${archived.length})` : ""}</span>
+                                    </button>
+                                    {archivedExpanded && (
+                                      <div className="cl-project-archive-list">
+                                        {archivedLoading && !archived ? (
+                                          <div className="cl-list-empty">Loading archive…</div>
+                                        ) : archived && archived.length > 0 ? (
+                                          archived.map((c) => {
+                                            const isActionsOpen = actionsOpenForChat === c.id;
+                                            return (
+                                              <div key={c.id} className="cl-chat-row-wrap" style={{ position: "relative" }}>
+                                                <button
+                                                  type="button"
+                                                  className={`cl-row cl-chat-row cl-chat-row-archived ${activeChatId === c.id ? "cl-active" : ""}`}
+                                                  title={c.title}
+                                                  onClick={() => {
+                                                    onPickChat(c.id, c.projectSlug);
+                                                    onMobileClose();
+                                                  }}
+                                                >
+                                                  <div className="cl-row-main">
+                                                    <span className="cl-row-title">{c.title}</span>
+                                                  </div>
+                                                  <div className="cl-row-meta">
+                                                    <span>{c.messageCount} msg</span>
+                                                    <span>·</span>
+                                                    <span>archived {relativeTime(c.archivedAt ?? c.updatedMs)}</span>
+                                                  </div>
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  className="cl-chat-row-actions"
+                                                  aria-label="Chat actions"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setActionsOpenForChat((curr) => (curr === c.id ? null : c.id));
+                                                  }}
+                                                ><Kebab size={13} /></button>
+                                                {isActionsOpen && (
+                                                  <div
+                                                    className="menu-popover cl-chat-actions-popover"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                  >
+                                                    <button
+                                                      onClick={() => {
+                                                        setActionsOpenForChat(null);
+                                                        void restoreChatRow(c.id);
+                                                      }}
+                                                    >
+                                                      Restore
+                                                    </button>
+                                                    <div className="sep" />
+                                                    <button
+                                                      onClick={() => {
+                                                        setActionsOpenForChat(null);
+                                                        void deleteChatRow(c.id, c.title);
+                                                      }}
+                                                    >
+                                                      Delete
+                                                    </button>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })
+                                        ) : (
+                                          <div className="cl-list-empty">No archived chats.</div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>

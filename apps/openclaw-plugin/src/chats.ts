@@ -38,6 +38,11 @@ export interface Chat {
   updatedMs: number;
   messages: ChatMessage[];
   kind?: ChatKind;
+  /** When true, the chat is hidden from the default list and lives in the
+   *  per-project archive tab. Legacy chats without the field read as
+   *  active (not archived). Pairs with archivedAt for sort. */
+  archived?: boolean;
+  archivedAt?: number;
 }
 
 export interface ChatSummary {
@@ -48,6 +53,8 @@ export interface ChatSummary {
   updatedMs: number;
   messageCount: number;
   kind?: ChatKind;
+  archived?: boolean;
+  archivedAt?: number;
 }
 
 async function ensureDir(): Promise<void> {
@@ -95,7 +102,15 @@ async function readChat(id: string): Promise<Chat | null> {
   }
 }
 
-export async function listChats(projectSlug?: string): Promise<ChatSummary[]> {
+/**
+ * List chats. By default excludes archived; pass `includeArchived: "only"`
+ * to fetch *only* archived chats (for the per-project archive tab) or
+ * `"all"` to fetch both. Default "active" matches every existing caller.
+ */
+export async function listChats(
+  projectSlug?: string,
+  includeArchived: "active" | "only" | "all" = "active",
+): Promise<ChatSummary[]> {
   await ensureDir();
   if (projectSlug !== undefined && projectSlug !== null) {
     if (!VALID_SLUG.test(projectSlug)) return [];
@@ -109,6 +124,9 @@ export async function listChats(projectSlug?: string): Promise<ChatSummary[]> {
       const chat = JSON.parse(raw) as Chat;
       if (projectSlug !== undefined && chat.projectSlug !== projectSlug)
         continue;
+      const isArchived = chat.archived === true;
+      if (includeArchived === "active" && isArchived) continue;
+      if (includeArchived === "only" && !isArchived) continue;
       out.push({
         id: chat.id,
         projectSlug: chat.projectSlug,
@@ -117,13 +135,41 @@ export async function listChats(projectSlug?: string): Promise<ChatSummary[]> {
         updatedMs: chat.updatedMs,
         messageCount: chat.messages.length,
         ...(chat.kind ? { kind: chat.kind } : {}),
+        ...(isArchived ? { archived: true } : {}),
+        ...(typeof chat.archivedAt === "number" ? { archivedAt: chat.archivedAt } : {}),
       });
     } catch {
       // skip corrupt file
     }
   }
-  out.sort((a, b) => b.updatedMs - a.updatedMs);
+  // Active list sorts by recent activity (updatedMs); archive sorts by
+  // when it was archived so the most-recently-archived shows first.
+  if (includeArchived === "only") {
+    out.sort((a, b) => (b.archivedAt ?? b.updatedMs) - (a.archivedAt ?? a.updatedMs));
+  } else {
+    out.sort((a, b) => b.updatedMs - a.updatedMs);
+  }
   return out;
+}
+
+export async function setChatArchived(input: {
+  chatId: string;
+  archived: boolean;
+}): Promise<Chat | null> {
+  if (!VALID_CHAT_ID.test(input.chatId)) return null;
+  return withChatLock(input.chatId, async () => {
+    const chat = await readChat(input.chatId);
+    if (!chat) return null;
+    if (input.archived) {
+      chat.archived = true;
+      chat.archivedAt = Date.now();
+    } else {
+      delete chat.archived;
+      delete chat.archivedAt;
+    }
+    await writeChatAtomic(chat);
+    return chat;
+  });
 }
 
 export async function createChat(input: {

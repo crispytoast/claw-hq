@@ -111,6 +111,28 @@ export function ChatPane({ client, sessionKey, status }: Props) {
         const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "assistant";
         const text = messageObj ? contentToText(messageObj.content) : "";
 
+        // Failure path: synthesize a ⚠️ bubble and stop the spinner. Without
+        // this, error/aborted frames skip the role check below and the bubble
+        // stays in `streaming` forever.
+        if (state === "error" || state === "aborted") {
+          const errMsg = typeof p.errorMessage === "string" ? p.errorMessage.trim() : "";
+          const reason = errMsg || (state === "aborted" ? "Run aborted before completing." : "Unknown error.");
+          const header = state === "aborted" ? "⚠️ Run stopped" : "⚠️ Run failed";
+          const body = `${header}\n\n${reason}`;
+          setMessages((prev) => {
+            const bubbleId = runId ? streamMapRef.current.get(runId) : undefined;
+            if (bubbleId) {
+              return prev.map((m) =>
+                m.id === bubbleId ? { ...m, text: body, streaming: false } : m,
+              );
+            }
+            return [...prev, { id: newMessageId(), role: "assistant", text: body, streaming: false }];
+          });
+          if (runId) setTimeout(() => streamMapRef.current.delete(runId), 1000);
+          setPending(false);
+          return;
+        }
+
         // Only consider assistant messages for streaming; users come from our own chat.send echo.
         if (role !== "assistant") return;
 
