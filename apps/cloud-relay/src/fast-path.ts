@@ -28,6 +28,7 @@ import {
   spawn,
   textDeltaFromEvent,
 } from "./claude-cli.js";
+import { buildFastPathMemoryPreamble } from "./fast-path-memory.js";
 
 export interface FastPathDeps {
   /** Connected SPA clients keyed by clientId — fast-path broadcasts to all. */
@@ -151,8 +152,28 @@ export async function runFastPathTurn(
 
   inFlight += 1;
 
+  // Memory preamble (Phase 9.3). Inject ONCE — on the first turn when
+  // claudeSessionId hasn't been captured yet. Subsequent turns reuse
+  // the CLI's --resume continuity which already carries the preamble
+  // forward in the conversation history.
+  let promptForClaude = req.promptText;
+  if (!chat.claudeSessionId) {
+    try {
+      const preamble = await buildFastPathMemoryPreamble({
+        chatKind: chat.kind,
+        projectSlug: chat.projectSlug,
+      });
+      if (preamble) {
+        promptForClaude = `${preamble}${req.promptText}`;
+        console.log(`[fast-path] memory preamble injected chatId=${req.chatId.slice(0, 8)} chars=${preamble.length}`);
+      }
+    } catch (e) {
+      console.warn(`[fast-path] memory preamble failed (continuing without): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   const args = buildClaudeArgs({
-    prompt: req.promptText,
+    prompt: promptForClaude,
     ...(req.model ? { model: req.model } : {}),
     ...(chat.claudeSessionId ? { resumeSessionId: chat.claudeSessionId } : {}),
   });
