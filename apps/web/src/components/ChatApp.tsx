@@ -55,6 +55,7 @@ export interface ChatRecentSummary {
   updatedMs: number;
   messageCount: number;
   kind?: ChatKind;
+  mode?: "gateway" | "fast";
 }
 
 /**

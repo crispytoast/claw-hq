@@ -82,6 +82,7 @@ interface ChatSummary {
   messageCount: number;
   archived?: boolean;
   archivedAt?: number;
+  mode?: "gateway" | "fast";
 }
 
 interface ChatsListResponse {
@@ -396,15 +397,21 @@ export function Sidebar({
     return () => window.removeEventListener("click", onDocClick);
   }, [actionsOpenForChat]);
 
-  async function createProjectChat(projectId: string) {
+  async function createProjectChat(projectId: string, forceMode?: "fast" | "gateway") {
     if (!client || status.kind !== "ready") return;
     try {
+      // Mode resolution: explicit forceMode wins; otherwise fall back to
+      // the user's global default from chat-prefs. forceMode === "gateway"
+      // skips the fast flag even if the default is on (one-off override).
+      const useFast =
+        forceMode === "fast" ||
+        (forceMode !== "gateway" && getFastModeDefault());
       const data = await client.call<ChatCreateResponse>(
         "clawhq.chats.create",
         {
           projectSlug: projectId,
           title: "New chat",
-          ...(getFastModeDefault() ? { mode: "fast" } : {}),
+          ...(useFast ? { mode: "fast" } : {}),
         },
       );
       setProjectChats((m) => {
@@ -849,6 +856,9 @@ export function Sidebar({
                                   )}
                                   {chat.title || "(untitled)"}
                                 </span>
+                                {chat.mode === "fast" && (
+                                  <span className="cl-chat-mode-chip" title="Fast mode">FAST</span>
+                                )}
                               </div>
                               <div className="cl-row-meta">
                                 {chat.projectSlug && (
@@ -973,14 +983,30 @@ export function Sidebar({
                           ><Brain size={13} /></button>
                           {isExpanded && (
                             <div className="cl-project-chats">
-                              <button
-                                type="button"
-                                className="cl-new-btn"
-                                onClick={() => void createProjectChat(p.id)}
-                              >
-                                <Plus size={12} />
-                                <span>New chat</span>
-                              </button>
+                              <div className="cl-new-btn-group">
+                                <button
+                                  type="button"
+                                  className="cl-new-btn"
+                                  onClick={() => void createProjectChat(p.id)}
+                                  title={
+                                    getFastModeDefault()
+                                      ? "New chat (fast mode is your default)"
+                                      : "New chat (gateway mode is your default)"
+                                  }
+                                >
+                                  <Plus size={12} />
+                                  <span>New chat</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="cl-new-btn cl-new-btn-fast"
+                                  onClick={() => void createProjectChat(p.id, "fast")}
+                                  title="Force fast mode — bypasses OpenClaw gateway"
+                                  aria-label="New fast chat"
+                                >
+                                  <span style={{ fontSize: "0.85rem", lineHeight: 1 }}>⚡</span>
+                                </button>
+                              </div>
                               {chatsLoading && !chats ? (
                                 <div className="cl-list-empty">Loading chats…</div>
                               ) : chats && chats.length > 0 ? (
@@ -1023,6 +1049,9 @@ export function Sidebar({
                                         >
                                           <div className="cl-row-main">
                                             <span className="cl-row-title">{c.title}</span>
+                                            {c.mode === "fast" && (
+                                              <span className="cl-chat-mode-chip" title="Fast mode — bypasses OpenClaw gateway">FAST</span>
+                                            )}
                                           </div>
                                           <div className="cl-row-meta">
                                             <span>{c.messageCount} msg</span>
@@ -1124,6 +1153,9 @@ export function Sidebar({
                                                 >
                                                   <div className="cl-row-main">
                                                     <span className="cl-row-title">{c.title}</span>
+                                                    {c.mode === "fast" && (
+                                                      <span className="cl-chat-mode-chip" title="Fast mode">FAST</span>
+                                                    )}
                                                   </div>
                                                   <div className="cl-row-meta">
                                                     <span>{c.messageCount} msg</span>
