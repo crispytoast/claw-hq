@@ -370,19 +370,18 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
       return;
     }
 
-    const runId = typeof payload.runId === "string" ? payload.runId : undefined;
+    // Touch ONLY an existing watch. Creating a watch on agent-emitted
+    // frames is unsafe: after a `state: "final"` clears the tracker, the
+    // very next session.changed / heartbeat / tool-result frame would
+    // re-arm a watch with no user prompt behind it, and 10 min of normal
+    // idle silence later the watchdog would synthesize a phantom
+    // "Run failed" error. Watch creation is owned exclusively by
+    // watchdogArmFromClient (real user prompts).
     const existing = runWatch.get(sessionKey);
-    if (existing) {
-      existing.lastActivityMs = Date.now();
-      if (runId) existing.lastRunId = runId;
-    } else {
-      runWatch.set(sessionKey, {
-        sessionKey,
-        lastActivityMs: Date.now(),
-        retryCount: 0,
-        ...(runId ? { lastRunId: runId } : {}),
-      });
-    }
+    if (!existing) return;
+    const runId = typeof payload.runId === "string" ? payload.runId : undefined;
+    existing.lastActivityMs = Date.now();
+    if (runId) existing.lastRunId = runId;
   }
 
   /** Replay the cached chat.send envelope as a fresh turn. Returns true
