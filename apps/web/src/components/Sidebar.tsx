@@ -5,6 +5,7 @@ const CLAWHQ_SESSION_PREFIX = "agent:main:clawhq-";
 import type { User } from "../api.js";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import { getFastModeDefault } from "../chat-prefs.js";
+import { sessionScopePrefix } from "./ChatApp.js";
 import {
   Home, Leaf, Check, Books, Brain, Tools, Models, Hand, Clock, Phone,
   Settings, Stethoscope, Plug, Chat, Plus, Clipboard, Chevron, Kebab, X, Folder,
@@ -83,6 +84,7 @@ interface ChatSummary {
   archived?: boolean;
   archivedAt?: number;
   mode?: "gateway" | "fast";
+  kind?: "project" | "head";
 }
 
 interface ChatsListResponse {
@@ -349,6 +351,55 @@ export function Sidebar({
         // Broadcast handler updates lists; nothing else needed here.
       } catch (err) {
         console.warn("clawhq.chats.archive failed:", err);
+      }
+    },
+    [client, status.kind],
+  );
+
+  const resetSessionRow = useCallback(
+    async (chat: ChatSummary) => {
+      if (!client || status.kind !== "ready") return;
+      if (
+        !window.confirm(
+          `Reset agent session for "${chat.title || "this chat"}"? ` +
+          `The chat history stays visible, but the agent will forget everything ` +
+          `above the divider.`,
+        )
+      ) {
+        return;
+      }
+      try {
+        // Plugin RPC: appends the "— Session reset —" marker AND clears
+        // claudeSessionId for fast-mode chats. Returns { marker, mode }.
+        const res = await client.call<{ mode?: "gateway" | "fast" }>(
+          "clawhq.chats.resetSession",
+          { chatId: chat.id },
+        );
+        // For gateway-mode chats we also need to flush the OpenClaw session
+        // itself (the persistent --resume state). sessions.reset is the
+        // gateway RPC for that. Fast-mode chats don't need this (no gateway
+        // session to flush; relay spawns claude fresh per turn).
+        if ((res?.mode ?? "gateway") === "gateway") {
+          // Build sessionKey from chat scope + chatId prefix (matches the
+          // pattern in ChatDetailView.sessionKeyFor and the relay's
+          // CLAWHQ_SESSION_RE). Project rows always have projectSlug;
+          // sessionScopePrefix folds in the kind fallback for safety.
+          const scope = sessionScopePrefix({ kind: chat.kind, projectSlug: chat.projectSlug });
+          const sessionKey = `agent:main:${scope}-${chat.id.slice(0, 8)}`;
+          try {
+            await client.call("sessions.reset", { sessionKey });
+          } catch (err) {
+            // Sessions.reset can 404 if the session was never created on
+            // the gateway (brand new chat with no turns yet). Harmless —
+            // there's nothing to reset.
+            console.warn("sessions.reset failed (likely no gateway session yet):", err);
+          }
+        }
+        // The plugin's broadcast (plugin.clawhq.chat.session_reset) will
+        // tell open chat views to reload + show the new divider.
+      } catch (err) {
+        console.warn("clawhq.chats.resetSession failed:", err);
+        window.alert(`Reset failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
     [client, status.kind],
@@ -1083,6 +1134,16 @@ export function Sidebar({
                                             }}
                                           >
                                             Rename
+                                          </button>
+                                          <div className="sep" />
+                                          <button
+                                            onClick={() => {
+                                              setActionsOpenForChat(null);
+                                              void resetSessionRow(c);
+                                            }}
+                                            title="Clear agent memory but keep chat visible"
+                                          >
+                                            Reset session
                                           </button>
                                           <div className="sep" />
                                           <button

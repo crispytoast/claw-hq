@@ -256,6 +256,41 @@ export interface AppendResult {
   messageCount: number;
 }
 
+/**
+ * Reset the underlying agent session for a chat without archiving it. For
+ * fast-mode chats: clears claudeSessionId so the next turn spawns a fresh
+ * `claude` subprocess without --resume. For gateway-mode chats: the caller
+ * still needs to call the gateway's sessions.reset RPC separately to flush
+ * the persistent session — this helper just handles the chat-record side
+ * (the divider marker). Returns the appended divider message + new state.
+ *
+ * The reset marker is a system-role message rendered as an italic divider
+ * in the SPA so the human-visible chat keeps its history but the agent
+ * is told (and the human is shown) where the memory cutoff is.
+ */
+export async function resetChatSession(input: {
+  chatId: string;
+}): Promise<{ marker: ChatMessage; mode: ChatMode | undefined } | null> {
+  if (!VALID_CHAT_ID.test(input.chatId)) return null;
+  return withChatLock(input.chatId, async () => {
+    const chat = await readChat(input.chatId);
+    if (!chat) return null;
+    const wasFast = chat.mode === "fast";
+    if (wasFast) {
+      delete chat.claudeSessionId;
+    }
+    const marker: ChatMessage = {
+      id: randomUUID(),
+      role: "system",
+      content: "— Session reset —",
+      createdMs: Date.now(),
+    };
+    chat.messages.push(marker);
+    await writeChatAtomic(chat);
+    return { marker, mode: chat.mode };
+  });
+}
+
 export async function appendMessage(input: {
   chatId: string;
   role: ChatRole;

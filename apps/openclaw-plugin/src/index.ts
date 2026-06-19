@@ -8,6 +8,7 @@ import {
   getChatHistory,
   listChats,
   renameChat,
+  resetChatSession,
   searchChats,
   setChatArchived,
   type ChatRole,
@@ -789,6 +790,61 @@ export default definePluginEntry({
           } catch (e) {
             api.logger.warn(
               `plugin.clawhq.chat.archived broadcast failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
+        } catch (e) {
+          respond(false, undefined, {
+            code: "INTERNAL",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+      { scope: "operator.write" },
+    );
+
+    api.registerGatewayMethod(
+      "clawhq.chats.resetSession",
+      async ({ respond, params, context }) => {
+        try {
+          const p = (params ?? {}) as { chatId?: unknown };
+          if (typeof p.chatId !== "string" || !p.chatId) {
+            respond(false, undefined, {
+              code: "INVALID_REQUEST",
+              message: "missing required param: chatId",
+            });
+            return;
+          }
+          const result = await resetChatSession({ chatId: p.chatId });
+          if (!result) {
+            respond(false, undefined, {
+              code: "NOT_FOUND",
+              message: `no chat: ${p.chatId}`,
+            });
+            return;
+          }
+          respond(true, { marker: result.marker, mode: result.mode ?? "gateway" });
+          try {
+            // Mirror as a chat.message broadcast so the existing chat-detail
+            // listener picks up the divider without needing session-reset
+            // awareness. The dedicated session_reset event fires alongside
+            // for callers that want to react to the reset itself.
+            context.broadcast("plugin.clawhq.chat.message", {
+              chatId: p.chatId,
+              projectSlug: null,
+              message: result.marker,
+              updatedMs: result.marker.createdMs,
+              messageCount: -1,
+            });
+            context.broadcast("plugin.clawhq.chat.session_reset", {
+              chatId: p.chatId,
+              marker: result.marker,
+              mode: result.mode ?? "gateway",
+            });
+          } catch (e) {
+            api.logger.warn(
+              `plugin.clawhq.chat.session_reset broadcast failed: ${
                 e instanceof Error ? e.message : String(e)
               }`,
             );

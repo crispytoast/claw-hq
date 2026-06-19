@@ -632,9 +632,11 @@ a:hover { text-decoration: underline; }
 .chat-system-row {
   text-align: center;
   font-size: 0.78rem;
+  font-style: italic;
   color: var(--muted-foreground);
   opacity: 0.85;
-  padding: 0.25rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  margin: 0.25rem 0;
   max-width: 42rem;
   align-self: center;
   animation: chat-item-in 180ms ease-out;
@@ -751,6 +753,35 @@ a:hover { text-decoration: underline; }
 }
 .chat-large-banner-dismiss:hover {
   background: rgba(255, 255, 255, 0.04);
+}
+
+/* Reset-session FAB pinned to the upper-right of the chat shell. Lets users
+   clear the agent's memory without leaving the chat. Pairs with the
+   sidebar kebab "Reset session" item; both call clawhq.chats.resetSession. */
+.chat-reset-session-fab {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 5;
+  padding: 6px 10px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  white-space: nowrap;
+}
+.chat-reset-session-fab:hover:not(:disabled) {
+  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.chat-reset-session-fab:disabled {
+  opacity: 0.5;
+  cursor: progress;
 }
 
 /* Stall-recovery CTA. Surfaces above the composer when the watchdog ships
@@ -3808,6 +3839,7 @@ a:hover { text-decoration: underline; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative; /* anchors .chat-reset-session-fab */
 }
 .chat-terminal-panel { display: none; }
 

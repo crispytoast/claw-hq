@@ -537,6 +537,7 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
   // successful sessions.compact + on any subsequent successful run.
   const [stallCompactAvailable, setStallCompactAvailable] = useState(false);
   const [compacting, setCompacting] = useState(false);
+  const [resettingSession, setResettingSession] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   /** runId -> id of the streaming assistant bubble */
   const streamMapRef = useRef<Map<string, string>>(new Map());
@@ -559,6 +560,37 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     () => sessionKeyFor(chatId, { kind: chatKind, projectSlug }),
     [chatId, chatKind, projectSlug],
   );
+
+  const resetSession = useCallback(async () => {
+    if (resettingSession) return;
+    if (!window.confirm(
+      "Reset agent session for this chat? History stays visible; " +
+      "the agent will forget everything above the divider.",
+    )) return;
+    setResettingSession(true);
+    try {
+      const res = await client.call<{ mode?: "gateway" | "fast" }>(
+        "clawhq.chats.resetSession",
+        { chatId },
+      );
+      if ((res?.mode ?? "gateway") === "gateway") {
+        try {
+          await client.call("sessions.reset", { sessionKey });
+        } catch (e) {
+          console.warn("sessions.reset failed (likely no session yet):", e);
+        }
+      }
+      // Re-enable memory preamble re-injection on next turn so the agent
+      // starts fresh with full project context.
+      memoryInjectedRef.current = false;
+      // Plugin broadcast (plugin.clawhq.chat.message) handles appending
+      // the divider via the existing chat-message listener.
+    } catch (e) {
+      setErr(`Reset failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setResettingSession(false);
+    }
+  }, [chatId, client, sessionKey, resettingSession]);
   /** Currently-active model for this chat's session. Null = gateway default. */
   const [currentModel, setCurrentModel] = useState<string | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -1769,6 +1801,16 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
   return (
     <div className="chat-swipe-wrap">
     <div className="chat-shell">
+      <button
+        type="button"
+        className="chat-reset-session-fab"
+        onClick={() => void resetSession()}
+        disabled={resettingSession}
+        title="Reset agent session — clears agent memory but keeps chat visible"
+        aria-label="Reset agent session"
+      >
+        {resettingSession ? "Resetting…" : "↻ Reset"}
+      </button>
       {showLargeChatBanner && (
         <div className="chat-large-banner">
           <div className="chat-large-banner-text">
