@@ -105,11 +105,15 @@ interface Props {
   onArchiveAndStartFresh?(chatId: string): void;
 }
 
-/** Soft-warn threshold for the large-chat banner. The OpenClaw gateway's
- *  underlying Claude CLI hits a turn-output buffer limit well before the
- *  15K-msg disaster from 2026-06-18. 150 errs on the safe side — banner
- *  shows once a chat is meaningful but well before the failure mode. */
-const LARGE_CHAT_BANNER_THRESHOLD = 150;
+/** Soft-warn threshold for the large-chat banner. The Claude CLI's per-
+ *  turn output cap (root cause of yesterday's 15K-msg failure AND the
+ *  screenshot-heavy turn failure that hit overnight) isn't actually
+ *  proportional to chat length — it's proportional to TURN output size,
+ *  which depends on what the agent does in a turn, not how big the
+ *  history is. So this threshold is just an "fyi this chat is getting
+ *  long, maybe start fresh" hint, not a load-bearing defense. 1000 is
+ *  a reasonable yellow flag without being annoying. Tune per taste. */
+const LARGE_CHAT_BANNER_THRESHOLD = 1000;
 
 interface PersistedMessage {
   id: string;
@@ -1002,9 +1006,23 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
         // chat" — compaction is faster and keeps the chat alive.
         const canCompact = p.canCompact === true;
         if (canCompact) setStallCompactAvailable(true);
-        const tail = canCompact
-          ? "_(The agent stalled — its session buffer probably overflowed. Tap **Compact & resume** below to clear it, then try again.)_"
-          : "_(The agent didn't produce a reply. If this keeps happening with the same chat, the conversation history may be too large — start a fresh chat.)_";
+        // Match the error message to the most plausible cause and tailor
+        // the guidance accordingly. The Claude CLI's per-turn output cap
+        // looks like "Claude CLI turn output exceeded limit" — that one
+        // is NOT about chat history length, it's about tool results
+        // (often big base64 like screenshots) blowing the per-turn
+        // stream-json budget. Generic "history may be too large" is
+        // actively misleading there.
+        const lowReason = reason.toLowerCase();
+        const isTurnOutputCap = lowReason.includes("turn output") && lowReason.includes("exceed");
+        let tail: string;
+        if (canCompact) {
+          tail = "_(The agent stalled — its session buffer probably overflowed. Tap **Compact & resume** below to clear it, then try again.)_";
+        } else if (isTurnOutputCap) {
+          tail = "_(This is the Claude CLI's per-turn output cap, not a chat-length issue. It triggers when a single turn produces too much output — most often a tool result returning a big base64 blob like a screenshot. The chat itself is fine; you can keep using it. The fix is on the agent side (have it save screenshots to disk and reference by path instead of reading the bytes back in-turn).)_";
+        } else {
+          tail = "_(The agent didn't produce a reply. If this keeps happening with the same chat, the conversation history may be too large — start a fresh chat.)_";
+        }
         const body = `${header}\n\n${reason}\n\n${tail}`;
         setItems((prev) => {
           const bubbleId = runId ? streamMapRef.current.get(runId) : undefined;
