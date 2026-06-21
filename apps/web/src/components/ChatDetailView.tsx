@@ -113,7 +113,13 @@ interface Props {
  *  history is. So this threshold is just an "fyi this chat is getting
  *  long, maybe start fresh" hint, not a load-bearing defense. 1000 is
  *  a reasonable yellow flag without being annoying. Tune per taste. */
-const LARGE_CHAT_BANNER_THRESHOLD = 1000;
+const LARGE_CHAT_BANNER_THRESHOLD = 3000;
+
+/** localStorage key prefix for per-chat banner dismissal. Suffixed with
+ *  the chatId so each chat dismisses independently. Durable across
+ *  reloads — the banner is informational, not load-bearing, and the
+ *  Reset button addresses the actual agent-stall concern. */
+const LARGE_CHAT_BANNER_DISMISS_KEY = "clawhq.chat.largeBanner.dismissed.";
 
 interface PersistedMessage {
   id: string;
@@ -572,6 +578,26 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     return () => client.unwatchSession(sessionKey);
   }, [client, sessionKey]);
 
+  // Large-chat banner: dismissal is per-chat AND durable across reloads
+  // (localStorage-keyed by chatId). The banner is informational — the
+  // Reset button addresses the actual agent-stall concern, so once the
+  // user has acknowledged once we don't keep nagging.
+  const [largeChatDismissed, setLargeChatDismissed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(LARGE_CHAT_BANNER_DISMISS_KEY + chatId) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const dismissLargeChatBanner = useCallback(() => {
+    setLargeChatDismissed(true);
+    try {
+      window.localStorage.setItem(LARGE_CHAT_BANNER_DISMISS_KEY + chatId, "1");
+    } catch {
+      /* private mode / quota — banner just re-shows on reload */
+    }
+  }, [chatId]);
+
   const resetSession = useCallback(async () => {
     if (resettingSession) return;
     if (!window.confirm(
@@ -594,6 +620,9 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
       // Re-enable memory preamble re-injection on next turn so the agent
       // starts fresh with full project context.
       memoryInjectedRef.current = false;
+      // Reset solves the agent-stall concern the banner warns about —
+      // dismiss it durably for this chat.
+      dismissLargeChatBanner();
       // Plugin broadcast (plugin.clawhq.chat.message) handles appending
       // the divider via the existing chat-message listener.
     } catch (e) {
@@ -601,7 +630,7 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     } finally {
       setResettingSession(false);
     }
-  }, [chatId, client, sessionKey, resettingSession]);
+  }, [chatId, client, sessionKey, resettingSession, dismissLargeChatBanner]);
   /** Currently-active model for this chat's session. Null = gateway default. */
   const [currentModel, setCurrentModel] = useState<string | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -1806,11 +1835,6 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
   );
   const hiddenCount = Math.max(0, items.length - visibleItems.length);
 
-  // Large-chat banner: dismissal is per-chat per-session (a different chatId
-  // dismisses independently; reloading the app re-shows the banner). Resets
-  // automatically when the user navigates to a different chat because the
-  // component remounts on chatId change.
-  const [largeChatDismissed, setLargeChatDismissed] = useState(false);
   const messageCount = items.length;
   const showLargeChatBanner =
     !largeChatDismissed
@@ -1846,7 +1870,7 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
             <button
               type="button"
               className="chat-large-banner-dismiss"
-              onClick={() => setLargeChatDismissed(true)}
+              onClick={dismissLargeChatBanner}
             >
               Not now
             </button>
