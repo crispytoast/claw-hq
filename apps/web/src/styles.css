@@ -758,6 +758,67 @@ a:hover { text-decoration: underline; }
 /* Reset-session FAB pinned to the upper-right of the chat shell. Lets users
    clear the agent's memory without leaving the chat. Pairs with the
    sidebar kebab "Reset session" item; both call clawhq.chats.resetSession. */
+/* Inline-editable chat title bar. Sits opposite the Reset FAB at the top
+   of the chat shell. Click the title to edit; Enter/blur commits via
+   clawhq.chats.rename, Escape cancels. Works for any chat (project,
+   recent, head Oswald) — the sidebar updates via the existing
+   plugin.clawhq.chat.renamed broadcast. */
+.chat-title-bar {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  right: 110px; /* leave room for the Reset FAB */
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.chat-title-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  text-align: left;
+  overflow: hidden;
+}
+.chat-title-button:hover {
+  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+.chat-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.chat-title-pencil {
+  opacity: 0.55;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.chat-title-button:hover .chat-title-pencil { opacity: 0.95; }
+.chat-title-input {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: 6px;
+  outline: none;
+}
+
 .chat-reset-session-fab {
   position: absolute;
   top: 12px;

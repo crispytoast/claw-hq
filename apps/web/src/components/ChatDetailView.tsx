@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { GatewayClient, ConnectionStatus } from "../gateway.js";
 import type { OpenClawEvent } from "@claw-hq/protocol-types";
 import { sessionScopePrefix, type ChatKind } from "./ChatApp.js";
@@ -598,6 +598,31 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     }
   }, [chatId]);
 
+  // Inline rename of the chat title from the header. Click the title to edit;
+  // Enter or blur commits, Escape cancels. Calls clawhq.chats.rename and
+  // relies on the existing plugin.clawhq.chat.renamed broadcast (handled
+  // below) to propagate to the sidebar.
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const startEditTitle = useCallback(() => {
+    setTitleDraft(chatTitle);
+    setEditingTitle(true);
+  }, [chatTitle]);
+  const cancelTitleEdit = useCallback(() => {
+    setEditingTitle(false);
+  }, []);
+  const commitTitleEdit = useCallback(async () => {
+    const next = titleDraft.trim();
+    setEditingTitle(false);
+    if (!next || next === chatTitle) return;
+    setChatTitle(next); // optimistic; broadcast will re-apply idempotently
+    try {
+      await client.call("clawhq.chats.rename", { chatId, title: next });
+    } catch (e) {
+      console.warn("clawhq.chats.rename failed:", e);
+    }
+  }, [client, chatId, chatTitle, titleDraft]);
+
   const resetSession = useCallback(async () => {
     if (resettingSession) return;
     if (!window.confirm(
@@ -871,6 +896,17 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
       // permission callback will retry.
     } catch (e) { console.warn("voice start failed:", e); }
   }, [voiceAvailable, listening]);
+
+  // Auto-resize the composer textarea to fit its content. CSS caps the
+  // visible height (max-height: 12.5rem = 200px); beyond that the textarea
+  // becomes internally scrollable. Runs on every input change including
+  // programmatic ones (voice partials, paste, history attach).
+  useLayoutEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+  }, [input]);
 
   // Track whether we've consumed the initial search query for THIS chat load.
   // Once we've scrolled to the first match (or confirmed there isn't one), we
@@ -1844,6 +1880,37 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
   return (
     <div className="chat-swipe-wrap">
     <div className="chat-shell">
+      <div className="chat-title-bar">
+        {editingTitle ? (
+          <input
+            autoFocus
+            className="chat-title-input"
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={() => void commitTitleEdit()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void commitTitleEdit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancelTitleEdit();
+              }
+            }}
+            aria-label="Chat title"
+          />
+        ) : (
+          <button
+            type="button"
+            className="chat-title-button"
+            onClick={startEditTitle}
+            title="Click to rename this chat"
+          >
+            <span className="chat-title-text">{chatTitle || "Untitled chat"}</span>
+            <span className="chat-title-pencil" aria-hidden="true"><Pencil size={11} /></span>
+          </button>
+        )}
+      </div>
       <button
         type="button"
         className="chat-reset-session-fab"
