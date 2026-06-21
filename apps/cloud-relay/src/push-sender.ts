@@ -131,14 +131,24 @@ export async function sendFcmMessage(
   const accessToken = await getAccessToken(sa);
 
   const url = `https://fcm.googleapis.com/v1/projects/${pc.projectId}/messages:send`;
-  // Data-only payload — no top-level `notification` field. That guarantees
-  // `onMessageReceived` fires on the APK even when the app is backgrounded,
-  // so we can suppress in-app duplicates when the user is already on the
-  // matching screen. Title/body travel inside data so the APK can render the
-  // system-tray notification itself.
+  // Notification+data hybrid payload. The top-level `notification` block lets
+  // Android's system tray render the heads-up automatically when the app is
+  // backgrounded or its process has been killed by Samsung One UI battery
+  // optimization — `onMessageReceived` is not reliably called for data-only
+  // messages in those states (regression observed 2026-06-21 after the
+  // 2026-06-16 data-only switch). Title/body are also mirrored into `data`
+  // so the new APK's `onMessageReceived` foreground-suppression path can
+  // read them when the app IS alive and on a different chat than the one
+  // that fired the push. Foreground delivery still hits `onMessageReceived`
+  // (FCM fires it whenever the app process is running, regardless of
+  // whether a notification block is present), so suppression keeps working.
   const message = {
     message: {
       token: args.token,
+      notification: {
+        title: args.notification.title,
+        body: args.notification.body,
+      },
       data: {
         title: args.notification.title,
         body: args.notification.body,
@@ -146,6 +156,7 @@ export async function sendFcmMessage(
       },
       android: {
         priority: "HIGH",
+        notification: { sound: "default" },
       },
     },
   };
