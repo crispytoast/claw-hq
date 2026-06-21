@@ -302,6 +302,32 @@ export async function appendMessage(input: {
   return withChatLock(input.chatId, async () => {
     const chat = await readChat(input.chatId);
     if (!chat) return null;
+    // Assistant-finals race between two writers: the SPA persist path (this
+    // RPC) and the relay's own appendAssistantFinalIfNew (cloud-relay/src/
+    // chats-storage.ts). Both processes have their own withChatLock map, so
+    // the cross-process race lets the second writer append a byte-identical
+    // duplicate. The relay's writer already content-dedups; mirror that
+    // here for symmetry. Dedup is scoped to the latest assistant since the
+    // last user turn — we don't want to suppress a real repeat from the
+    // model on a different turn that happens to match a prior reply.
+    if (input.role === "assistant") {
+      for (let i = chat.messages.length - 1; i >= 0; i--) {
+        const m = chat.messages[i];
+        if (!m) continue;
+        if (m.role === "assistant") {
+          if (m.content === content) {
+            return {
+              message: m,
+              projectSlug: chat.projectSlug,
+              updatedMs: chat.updatedMs,
+              messageCount: chat.messages.length,
+            };
+          }
+          break;
+        }
+        if (m.role === "user") break;
+      }
+    }
     const message: ChatMessage = {
       id: randomUUID(),
       role: input.role,
