@@ -58,6 +58,9 @@ class ClawHqMessagingService : FirebaseMessagingService() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val id = (message.messageId ?: System.currentTimeMillis().toString()).hashCode()
         nm.notify(id, builder.build())
+        if (!deepLink.isNullOrBlank()) {
+            ClawHqApp.instance?.registerPostedNotification(id, deepLink)
+        }
     }
 
     private fun shouldSuppress(deepLink: String?): Boolean {

@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import {
   isTunnelEnvelope,
   type TunnelEnvelope,
+  type TunnelFrameEnvelope,
 } from "@claw-hq/protocol-types";
 import type Database from "better-sqlite3";
 import { findPairingToken, touchPairingToken } from "./db.js";
@@ -31,6 +32,13 @@ interface SingleTenantState {
   /** User id this agent's tunnel-agent is bound to. */
   agentOwnerId: string | null;
   clients: Map<string, WebSocket>;
+  /**
+   * Multi-viewer subscriptions: sessionKey -> set of clientIds that asked to
+   * watch agent-to-client event frames for that key. Used to fan out copies
+   * (tagged viewerRole="peer") to clients other than the originator. Cleaned
+   * up on client close.
+   */
+  watches: Map<string, Set<string>>;
 }
 
 /**
@@ -174,7 +182,47 @@ interface RoutingDeps {
 
 export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): void {
   const { db, config, inProcessAgentToken } = deps;
-  const state: SingleTenantState = { agent: null, agentOwnerId: null, clients: new Map() };
+  const state: SingleTenantState = { agent: null, agentOwnerId: null, clients: new Map(), watches: new Map() };
+
+  /**
+   * Pull the sessionKey out of an agent-to-client event payload, if any. The
+   * relay never parses semantics — but every event we'd want to fan out
+   * carries `payload.sessionKey` (chat, session.tool, session.changed,
+   * exec.approval.*). Frames without one are connection-level and don't fan.
+   */
+  function eventSessionKey(envelope: TunnelEnvelope): string | null {
+    if (envelope.kind !== "frame" || envelope.direction !== "agent-to-client") return null;
+    const frame = envelope.frame;
+    if (frame.type !== "event") return null;
+    const p = (frame.payload ?? {}) as Record<string, unknown>;
+    return typeof p.sessionKey === "string" ? p.sessionKey : null;
+  }
+
+  /**
+   * Fan an agent-to-client event to every peer subscribed to its sessionKey,
+   * tagged viewerRole="peer". Originator is excluded (they get the direct
+   * delivery one stack frame up). No-op for non-event frames.
+   */
+  function fanOutToPeers(envelope: TunnelEnvelope): void {
+    if (envelope.kind !== "frame") return;
+    const sessionKey = eventSessionKey(envelope);
+    if (!sessionKey) return;
+    const subscribers = state.watches.get(sessionKey);
+    if (!subscribers || subscribers.size === 0) return;
+    // Build the peer-tagged envelope once and reuse the serialized string —
+    // typical case is 1-2 peers but avoid the alloc if 0.
+    let serialized: string | null = null;
+    for (const peerId of subscribers) {
+      if (peerId === envelope.clientId) continue; // originator already got it
+      const peerSocket = state.clients.get(peerId);
+      if (!peerSocket || peerSocket.readyState !== 1) continue;
+      if (serialized === null) {
+        const peerEnvelope: TunnelFrameEnvelope = { ...envelope, viewerRole: "peer" };
+        serialized = JSON.stringify(peerEnvelope);
+      }
+      peerSocket.send(serialized);
+    }
+  }
 
   function ownerIdForAgentToken(token: string): string {
     if (inProcessAgentToken && token === inProcessAgentToken) {
@@ -672,6 +720,12 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
           if (delivered) {
             client.send(JSON.stringify(envelope));
           }
+          // Multi-viewer fanout. The originator above is the addressed client
+          // (untagged); peers subscribed via client-watch get a copy tagged
+          // viewerRole="peer" so the SPA can suppress duplicate chat-storage
+          // writes. Only events with a payload.sessionKey fan; res frames and
+          // synthetic relay events stay 1:1.
+          fanOutToPeers(envelope);
           watchdogTouch(envelope);
           maybeFirePushFromFrame(envelope);
           // Server-side persistence is unconditional. appendAssistantFinalIfNew
@@ -748,6 +802,25 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
         if (!isTunnelEnvelope(parsed)) return;
         const envelope = parsed;
 
+        if (envelope.kind === "client-watch") {
+          let subscribers = state.watches.get(envelope.sessionKey);
+          if (!subscribers) {
+            subscribers = new Set();
+            state.watches.set(envelope.sessionKey, subscribers);
+          }
+          subscribers.add(clientId);
+          return;
+        }
+
+        if (envelope.kind === "client-unwatch") {
+          const subscribers = state.watches.get(envelope.sessionKey);
+          if (subscribers) {
+            subscribers.delete(clientId);
+            if (subscribers.size === 0) state.watches.delete(envelope.sessionKey);
+          }
+          return;
+        }
+
         if (envelope.kind === "frame" && envelope.direction === "client-to-agent") {
           // Fast-path interception (Phase 9.1). For chat.send requests on a
           // clawhq session whose backing chat has mode==="fast", bypass the
@@ -791,6 +864,12 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
       socket.on("close", (code, reason) => {
         console.log(`[relay] -client clientId=${clientId} code=${code} reason=${reason.toString() || "(none)"}`);
         state.clients.delete(clientId);
+        // GC this client from every sessionKey watch set so we don't leak
+        // dead clientIds. Map size is bounded by active sessionKeys (~10s)
+        // so a full sweep is cheap.
+        for (const [key, subs] of state.watches) {
+          if (subs.delete(clientId) && subs.size === 0) state.watches.delete(key);
+        }
         if (state.agent && state.agent.readyState === 1) {
           sendEnvelope(state.agent, {
             kind: "client-detached",

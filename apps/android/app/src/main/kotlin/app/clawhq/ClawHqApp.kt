@@ -18,6 +18,7 @@ import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -41,9 +42,33 @@ class ClawHqApp : Application() {
 
     fun isAppForegrounded(): Boolean = started.get() > 0
 
+    // Tracks notifications we've posted so we can dismiss them when the
+    // user navigates to the matching chat directly (without tapping the
+    // notification). Map is notificationId -> deepLink path. Notifications
+    // suppressed by shouldSuppress() never enter this map.
+    private val pendingNotifications = ConcurrentHashMap<Int, String>()
+
+    fun registerPostedNotification(id: Int, deepLink: String) {
+        pendingNotifications[id] = deepLink
+    }
+
     /** Called by MainActivity each time the WebView finishes loading a URL. */
     fun setCurrentWebViewUrl(url: String?) {
         currentWebViewUrl = url
+        if (url != null) dismissNotificationsForUrl(url)
+    }
+
+    private fun dismissNotificationsForUrl(currentUrl: String) {
+        if (pendingNotifications.isEmpty()) return
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val it = pendingNotifications.entries.iterator()
+        while (it.hasNext()) {
+            val (id, deepLink) = it.next()
+            if (currentUrl.contains(deepLink)) {
+                nm.cancel(id)
+                it.remove()
+            }
+        }
     }
 
     override fun onCreate() {

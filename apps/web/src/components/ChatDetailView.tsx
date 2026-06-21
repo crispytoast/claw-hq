@@ -561,6 +561,17 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     [chatId, chatKind, projectSlug],
   );
 
+  // Multi-viewer subscription. Mounting this view declares we want to see
+  // agent-to-client event frames for sessionKey even if this client wasn't
+  // the run's originator. Peer copies arrive tagged viewerRole="peer" so
+  // the event handlers below can render them without re-persisting to chat
+  // storage (server-side relay owns the authoritative writes for assistant
+  // turns; originator-driven persists handle tool/approval).
+  useEffect(() => {
+    client.watchSession(sessionKey);
+    return () => client.unwatchSession(sessionKey);
+  }, [client, sessionKey]);
+
   const resetSession = useCallback(async () => {
     if (resettingSession) return;
     if (!window.confirm(
@@ -1121,8 +1132,13 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
         // path lags by one turn (it fires when the NEXT turn starts).
         // Workaround: poll sessions.list shortly after chat-final, find our
         // session row, attach the HUD to this exact bubble (runId-mapped).
+        //
+        // Peers skip — only the originator persists the HUD as a system row;
+        // peers receive it via the plugin.clawhq.chat.message broadcast and
+        // render it as a system bubble below (no inline attach). Acceptable
+        // v1 trade-off vs. having every viewer write a duplicate HUD row.
         const turnBubbleId = runId ? streamMapRef.current.get(runId) : null;
-        if (turnBubbleId) {
+        if (turnBubbleId && ev.viewerRole !== "peer") {
           void fetchAndAttachHud({
             client,
             chatId,
@@ -1269,6 +1285,9 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
           return next;
         });
         // Persist the completed tool call so a chat reload reconstructs it.
+        // Peers skip — the originator's persist + plugin broadcast will
+        // surface the row across devices via the chat.message listener.
+        if (ev.viewerRole === "peer") return;
         const payload: PersistedToolPayload = {
           toolCallId,
           name,

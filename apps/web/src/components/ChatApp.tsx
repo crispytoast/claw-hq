@@ -625,8 +625,16 @@ export function ChatApp({ user, onLogout }: Props) {
       const prefix = m[1];
       const chat = recentChatsRef.current.find((c2) => c2.id.startsWith(prefix));
       if (!chat) return;
+      // Sidebar dot update is safe on every viewer — it's local-only UI.
       handleChatStatus(chat.id, "done");
       if (state !== "final") return;
+      // Peer copies skip the persist. Only the originator client writes the
+      // assistant-final to chat storage; peers see the row via the
+      // plugin.clawhq.chat.message broadcast. The relay also has its own
+      // unconditional server-side persist (maybePersistChatTerminal in
+      // ws-routing.ts) as a backstop when the originator has navigated
+      // away or disconnected mid-run.
+      if (ev.viewerRole === "peer") return;
       const messageObj = (p.message ?? null) as Record<string, unknown> | null;
       const role = messageObj && typeof messageObj.role === "string" ? messageObj.role : "";
       if (role !== "assistant" || !messageObj) return;

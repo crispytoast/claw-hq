@@ -45,6 +45,14 @@ export class GatewayClient {
   private statusListeners = new Set<StatusListener>();
   private shouldReconnect = true;
   private reconnectBackoffMs = 1_000;
+  /**
+   * Multi-viewer subscription refcount. Each ChatDetailView mount increments
+   * for its sessionKey; unmount decrements. 0→1 sends `client-watch` to the
+   * relay; 1→0 sends `client-unwatch`. On WS reconnect, every key with
+   * count > 0 is re-watched so the new server-side clientId picks up where
+   * the old one left off.
+   */
+  private watchedSessionKeys = new Map<string, number>();
 
   constructor(private readonly url: string) {}
 
@@ -110,6 +118,32 @@ export class GatewayClient {
     this.sendFrame({ type: "req", id, method, params });
   }
 
+  /**
+   * Subscribe this client to multi-viewer fanout for `sessionKey`. Idempotent
+   * + refcounted — callers should pair every watchSession with an
+   * unwatchSession (typically in a useEffect cleanup). Only the 0→1
+   * transition crosses the wire.
+   */
+  watchSession(sessionKey: string): void {
+    const prev = this.watchedSessionKeys.get(sessionKey) ?? 0;
+    this.watchedSessionKeys.set(sessionKey, prev + 1);
+    if (prev === 0 && this.ws && this.ws.readyState === 1) {
+      this.ws.send(JSON.stringify({ kind: "client-watch", sessionKey }));
+    }
+  }
+
+  unwatchSession(sessionKey: string): void {
+    const prev = this.watchedSessionKeys.get(sessionKey) ?? 0;
+    if (prev <= 1) {
+      this.watchedSessionKeys.delete(sessionKey);
+      if (prev === 1 && this.ws && this.ws.readyState === 1) {
+        this.ws.send(JSON.stringify({ kind: "client-unwatch", sessionKey }));
+      }
+    } else {
+      this.watchedSessionKeys.set(sessionKey, prev - 1);
+    }
+  }
+
   private sendFrame(frame: OpenClawFrame): void {
     if (!this.ws || this.ws.readyState !== 1) return;
     this.ws.send(JSON.stringify({
@@ -133,6 +167,13 @@ export class GatewayClient {
     ws.addEventListener("open", () => {
       this.reconnectBackoffMs = 1_000;
       this.updateStatus({ kind: "session-handshaking" });
+      // Re-send every active watch — a fresh WS means a fresh server-side
+      // clientId, so the relay's watch sets dropped us on close. Without
+      // this, peer tabs would silently stop receiving fanout after any
+      // network blip.
+      for (const sessionKey of this.watchedSessionKeys.keys()) {
+        ws.send(JSON.stringify({ kind: "client-watch", sessionKey }));
+      }
     });
 
     ws.addEventListener("close", (ev) => {
@@ -152,10 +193,16 @@ export class GatewayClient {
       let envelope: unknown;
       try { envelope = JSON.parse(typeof ev.data === "string" ? ev.data : ""); } catch { return; }
       if (!envelope || typeof envelope !== "object") return;
-      const obj = envelope as { kind?: string; frame?: unknown; direction?: string };
+      const obj = envelope as { kind?: string; frame?: unknown; direction?: string; viewerRole?: string };
       if (obj.kind !== "frame" || obj.direction !== "agent-to-client") return;
       const frame = obj.frame as OpenClawFrame;
       if (!frame || typeof frame !== "object") return;
+      // Lift the envelope-level viewerRole onto the event so listeners can
+      // gate side effects (clawhq.chats.append) without touching the
+      // envelope. Only events fan out; res frames stay 1:1.
+      if (frame.type === "event" && obj.viewerRole === "peer") {
+        (frame as OpenClawEvent).viewerRole = "peer";
+      }
 
       // Handle synthetic relay events first.
       if (frame.type === "event") {

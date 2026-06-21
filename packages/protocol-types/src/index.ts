@@ -31,6 +31,15 @@ export interface OpenClawEvent {
   payload?: unknown;
   seq?: number;
   stateVersion?: number;
+  /**
+   * Multi-viewer tag: set to "peer" on event copies fanned out by the relay to
+   * clients that subscribed via `client-watch` but did NOT originate the run.
+   * Peers should treat these as display-only and skip any side effects that
+   * write to chat storage (clawhq.chats.append). The originator's copy is
+   * untagged. Set by the gateway client from the envelope before dispatching
+   * to listeners — relay puts it on the envelope, not the inner frame.
+   */
+  viewerRole?: "peer";
 }
 
 export function isOpenClawFrame(value: unknown): value is OpenClawFrame {
@@ -53,7 +62,9 @@ export type TunnelEnvelope =
   | TunnelClientAttachedEnvelope
   | TunnelClientDetachedEnvelope
   | TunnelFrameEnvelope
-  | TunnelByeEnvelope;
+  | TunnelByeEnvelope
+  | ClientWatchEnvelope
+  | ClientUnwatchEnvelope;
 
 export interface TunnelHelloEnvelope {
   kind: "hello";
@@ -92,11 +103,34 @@ export interface TunnelFrameEnvelope {
   direction: "agent-to-client" | "client-to-agent";
   /** Opaque OpenClaw frame. Relay does not parse beyond logging. */
   frame: OpenClawFrame;
+  /**
+   * Multi-viewer marker. Set to "peer" on agent-to-client event copies the
+   * relay fans out to subscribed non-originator clients. Originator copies
+   * (the 1:1 routed path) are untagged. The SPA's gateway client lifts this
+   * onto the inner OpenClawEvent so listeners can gate side effects.
+   */
+  viewerRole?: "peer";
 }
 
 export interface TunnelByeEnvelope {
   kind: "bye";
   reason: string;
+}
+
+/**
+ * client -> relay: subscribe this client to agent-to-client event frames for
+ * the given OpenClaw sessionKey. Relay handles directly — never forwarded to
+ * the tunnel-agent. Idempotent; sending twice is fine.
+ */
+export interface ClientWatchEnvelope {
+  kind: "client-watch";
+  sessionKey: string;
+}
+
+/** client -> relay: stop receiving fan-out for sessionKey. */
+export interface ClientUnwatchEnvelope {
+  kind: "client-unwatch";
+  sessionKey: string;
 }
 
 export function isTunnelEnvelope(value: unknown): value is TunnelEnvelope {
@@ -108,6 +142,8 @@ export function isTunnelEnvelope(value: unknown): value is TunnelEnvelope {
     kind === "client-attached" ||
     kind === "client-detached" ||
     kind === "frame" ||
-    kind === "bye"
+    kind === "bye" ||
+    kind === "client-watch" ||
+    kind === "client-unwatch"
   );
 }
