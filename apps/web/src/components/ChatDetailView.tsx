@@ -1814,7 +1814,10 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
   );
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Enter inserts a newline (default textarea behaviour). Send via the
+    // send button — or Ctrl/Cmd+Enter on desktop as a power-user shortcut.
+    // Mobile keyboards never carry the modifier, so they always newline.
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       void sendMessage();
     }
