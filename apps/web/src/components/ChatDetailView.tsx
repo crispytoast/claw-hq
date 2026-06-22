@@ -598,6 +598,33 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     }
   }, [chatId]);
 
+  // Terminal-panel visibility on desktop. On mobile the panel is reachable
+  // by horizontal swipe (the chat-swipe-wrap snap container); on desktop
+  // it's hidden by default and toggled by the </> button in the title bar.
+  // Persisted per-browser via localStorage so the toggle sticks across
+  // reloads. Doesn't affect mobile — the swipe-wrap CSS always shows it
+  // there. Keyed globally (not per-chat) since the preference is a
+  // workspace-level layout choice.
+  const TERMINAL_TOGGLE_KEY = "clawhq.chat.terminal.visible";
+  const [showTerminal, setShowTerminal] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(TERMINAL_TOGGLE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleTerminal = useCallback(() => {
+    setShowTerminal((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem(TERMINAL_TOGGLE_KEY, next ? "1" : "0");
+      } catch {
+        /* private mode / quota — toggle won't survive reload */
+      }
+      return next;
+    });
+  }, []);
+
   // Inline rename of the chat title from the header. Click the title to edit;
   // Enter or blur commits, Escape cancels. Calls clawhq.chats.rename and
   // relies on the existing plugin.clawhq.chat.renamed broadcast (handled
@@ -1761,7 +1788,11 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
   // immediately so a double-tap can't double-send.
   const answerQuestion = useCallback(
     async (toolCallId: string, label: string) => {
-      if (status.kind !== "ready" || pending) return;
+      // Only gate on connection status — `pending` would block answers to
+      // an AskUserQuestion emitted mid-turn (which is the whole point of
+      // the tool). The optimistic "answered" flip below prevents the same
+      // card from being double-submitted.
+      if (status.kind !== "ready") return;
       let alreadyAnswered = false;
       setItems((prev) => {
         const idx = prev.findIndex(
@@ -1881,7 +1912,7 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     && !!onArchiveAndStartFresh;
 
   return (
-    <div className="chat-swipe-wrap">
+    <div className={`chat-swipe-wrap ${showTerminal ? "with-terminal" : ""}`}>
     <div className="chat-shell">
       <div className="chat-title-bar">
         {editingTitle ? (
@@ -1914,6 +1945,16 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
           </button>
         )}
       </div>
+      <button
+        type="button"
+        className={`chat-terminal-toggle ${showTerminal ? "active" : ""}`}
+        onClick={toggleTerminal}
+        title={showTerminal ? "Hide terminal panel" : "Show live terminal panel"}
+        aria-label="Toggle terminal panel"
+        aria-pressed={showTerminal}
+      >
+        {showTerminal ? "Hide </>" : "</> Terminal"}
+      </button>
       <button
         type="button"
         className="chat-reset-session-fab"
@@ -2002,7 +2043,12 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
                 key={itemKey(it)}
                 question={it.question}
                 onAnswer={answerQuestion}
-                disabled={status.kind !== "ready" || pending}
+                // Don't gate on `pending` — the agent emits AskUserQuestion
+                // mid-turn precisely because it's waiting on the user, so
+                // the buttons MUST be tappable while a turn is in flight.
+                // Double-tap is already prevented by the `answered` status
+                // flip inside QuestionBlock + answerQuestion's idempotency.
+                disabled={status.kind !== "ready"}
               />
             );
           }
