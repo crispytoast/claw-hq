@@ -2022,10 +2022,13 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
         )}
         {visibleItems.map((it) => {
           if (it.kind === "tool") {
-            // On mobile the tool blocks live in the swipe-right terminal pane
-            // so the chat reads as a clean conversation; desktop keeps them
-            // inline (the terminal pane is hidden on wide viewports).
-            if (isMobile) return null;
+            // Tool calls live in the side terminal pane whenever it's visible
+            // — always on mobile (swipe-right), and on desktop when the user
+            // has toggled the panel on. In those cases we strip them from the
+            // chat body so the conversation reads clean; otherwise (desktop +
+            // terminal off) we render the inline ToolBlock as a fallback so
+            // tools aren't hidden entirely.
+            if (isMobile || showTerminal) return null;
             return <ToolBlock key={itemKey(it)} tool={it.tool} />;
           }
           if (it.kind === "approval") {
