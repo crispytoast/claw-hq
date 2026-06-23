@@ -31,22 +31,30 @@ interface UploadedAttachment {
   previewUrl?: string;
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let bin = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
-  }
-  return btoa(bin);
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("FileReader returned non-string result"));
+        return;
+      }
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : "");
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader error"));
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function attachmentBytesBase64(a: UploadedAttachment): Promise<string> {
   if (a.source.kind === "file") {
-    return bytesToBase64(new Uint8Array(await a.source.file.arrayBuffer()));
+    return blobToBase64(a.source.file);
   }
   const res = await fetch(a.source.url, { credentials: "same-origin" });
   if (!res.ok) throw new Error(`re-fetch upload failed: ${res.status}`);
-  return bytesToBase64(new Uint8Array(await res.arrayBuffer()));
+  return blobToBase64(await res.blob());
 }
 
 interface UploadResponse {
