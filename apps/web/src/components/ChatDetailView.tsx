@@ -1084,6 +1084,31 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     };
   }, [client, chatId, status.kind]);
 
+  // Pending-stuck watchdog. A healthy turn clears `pending` on the agent's
+  // `final` event (line ~1187/1220). If the run dies silently — gateway
+  // restart, tunnel drop mid-turn, agent crash — pending sticks forever and
+  // every subsequent send silently no-ops at the gate up top. After 120 s
+  // with no final, we clear pending so the user can send again and add a
+  // system bubble so they know what happened.
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(() => {
+      setPending(false);
+      setItems((prev) => [
+        ...prev,
+        {
+          kind: "message",
+          message: {
+            id: newId(),
+            role: "system",
+            text: "Previous turn appears stuck (no response in 2 min). You can try again, or tap Reset above to clear the agent session.",
+          },
+        },
+      ]);
+    }, 120_000);
+    return () => clearTimeout(timer);
+  }, [pending]);
+
   // Reconcile running flag with upstream truth on every (re)connect. The
   // indicator should reflect the live run state, so we re-poll sessions.list
   // whenever the gateway flips to ready — not just once on mount. Two cases:
@@ -1706,7 +1731,14 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     const text = input.trim();
     const pendingAttachments = attachments;
     if (!text && pendingAttachments.length === 0) return;
-    if (status.kind !== "ready" || pending) return;
+    if (status.kind !== "ready") {
+      setErr("Can't send — disconnected from the gateway. Reload the page or check the relay.");
+      return;
+    }
+    if (pending) {
+      setErr("Can't send — the previous turn is still running. Tap Reset to recover.");
+      return;
+    }
     // If voice was streaming partials when the user hit send, stop the
     // recognizer so it doesn't append the next utterance into the next chat.
     if (listening) {
@@ -1776,7 +1808,11 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
           .slice(2, 8)}`,
       };
       if (oclawAttachments.length > 0) sendParams.attachments = oclawAttachments;
-      await client.call("chat.send", sendParams);
+      // Attachments balloon the payload (base64 of a phone photo can be 7-13 MB
+      // by the time it round-trips relay → tunnel → gateway). 30 s isn't enough
+      // headroom; 120 s covers a slow tunnel hop without leaving pending stuck.
+      const sendTimeoutMs = oclawAttachments.length > 0 ? 120_000 : 30_000;
+      await client.call("chat.send", sendParams, sendTimeoutMs);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg);
