@@ -24,7 +24,12 @@ import { findPairingToken, touchPairingToken } from "./db.js";
 import type { ResolvedConfig } from "./config.js";
 import { resolveOwner } from "./auth.js";
 import { deliverNotification } from "./push.js";
-import { appendAssistantFinalIfNew, loadChatForFastPath, resolveClawhqChatIdFromPrefix } from "./chats-storage.js";
+import {
+  appendAssistantFinalIfNew,
+  getChatTitleByPrefix,
+  loadChatForFastPath,
+  resolveClawhqChatIdFromPrefix,
+} from "./chats-storage.js";
 import { runFastPathTurn } from "./fast-path.js";
 
 interface SingleTenantState {
@@ -537,17 +542,34 @@ export function registerWsRoutes(fastify: FastifyInstance, deps: RoutingDeps): v
       }
       pushDedup.set(dedupKey, now);
     }
-    void deliverNotification(
-      { db, config },
-      {
-        userId: state.agentOwnerId,
-        title: n.title,
-        body: n.body,
-        kind: n.kind,
-        deepLink: n.deepLink ?? null,
-        data: n.data,
-      },
-    ).catch((err) => {
+    // Disambiguate the tray title for clawhq-scoped notifications by prefixing
+    // the chat name ("Glass HQ · Response ready" vs "Head Oswald · Response
+    // ready"). Without this, two chats firing pushes simultaneously look
+    // identical in the tray and Frank can't tell which chat replied.
+    const ownerId = state.agentOwnerId;
+    const chatIdPrefix = typeof n.data?.chatIdPrefix === "string" ? n.data.chatIdPrefix : null;
+    void (async () => {
+      let title = n.title;
+      if (chatIdPrefix) {
+        try {
+          const chatTitle = await getChatTitleByPrefix(chatIdPrefix);
+          if (chatTitle) title = `${chatTitle} · ${n.title}`;
+        } catch (err) {
+          console.warn(`[push] chat title lookup failed for ${chatIdPrefix}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      await deliverNotification(
+        { db, config },
+        {
+          userId: ownerId,
+          title,
+          body: n.body,
+          kind: n.kind,
+          deepLink: n.deepLink ?? null,
+          data: n.data,
+        },
+      );
+    })().catch((err) => {
       console.warn(`[push] deliverNotification threw: ${err instanceof Error ? err.message : String(err)}`);
     });
   }

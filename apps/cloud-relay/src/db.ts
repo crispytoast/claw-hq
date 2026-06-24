@@ -262,6 +262,26 @@ export function markAllNotificationsRead(db: Database.Database, userId: string):
   return res.changes;
 }
 
+/**
+ * Mark every notification with an exact deep_link match as read. Used when the
+ * user lands on a chat via a /chat-detail/<prefix> push deep link so the bell
+ * badge stops ballooning. Tapping a push has never marked anything read on its
+ * own — only "Mark all read" or the in-app inbox did — so the badge grew
+ * unbounded until 2026-06-24 when this was added.
+ */
+export function markNotificationsReadByDeepLink(
+  db: Database.Database,
+  args: { userId: string; deepLink: string },
+): number {
+  const res = db
+    .prepare(
+      `UPDATE notifications SET read_at = ?
+       WHERE user_id = ? AND deep_link = ? AND read_at IS NULL`,
+    )
+    .run(Date.now(), args.userId, args.deepLink);
+  return res.changes;
+}
+
 export function unreadNotificationCount(db: Database.Database, userId: string): number {
   const row = db
     .prepare(`SELECT COUNT(*) as c FROM notifications WHERE user_id = ? AND read_at IS NULL`)

@@ -90,6 +90,11 @@ export const systemApi = {
   markRead: (id: string) =>
     call<{ ok: boolean }>(`/api/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),
   markAllRead: () => call<{ ok: true; marked: number }>("/api/notifications/read-all", { method: "POST" }),
+  markReadByChatPrefix: (chatIdPrefix: string) =>
+    call<{ ok: true; marked: number }>(
+      "/api/notifications/read-by-chat-prefix",
+      { method: "POST", body: JSON.stringify({ chatIdPrefix }) },
+    ),
 
   // ---------- push devices ----------
   pushDevices: () => call<{ devices: PushDevice[] }>("/api/push/devices"),

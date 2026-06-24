@@ -565,6 +565,14 @@ export function ChatApp({ user, onLogout }: Props) {
       setActiveMemoryProject(null);
       setActiveWorkspaceMemory(false);
       setPage("chat");
+      // Drain every notification whose deep_link points at this chat.
+      // Without this, tapping a push never marks anything read; only "Mark
+      // all read" or the in-app inbox does, so the bell grows unbounded.
+      const prefix = chat.id.slice(0, 8);
+      void systemApi.markReadByChatPrefix(prefix)
+        .then(() => systemApi.notifications(1))
+        .then((l) => setUnreadCount(l.unread))
+        .catch(() => {});
     }
     setPendingChatPrefix(null);
   }, [pendingChatPrefix, recentChats]);

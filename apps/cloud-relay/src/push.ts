@@ -21,6 +21,7 @@ import {
   listNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  markNotificationsReadByDeepLink,
   unreadNotificationCount,
   type NotificationRow,
 } from "./db.js";
@@ -213,6 +214,29 @@ export async function registerPushRoutes(fastify: FastifyInstance, deps: PushDep
     const changed = markAllNotificationsRead(db, owner.id);
     return { ok: true, marked: changed };
   });
+
+  // Mark every notification whose deep_link points at a specific clawhq chat
+  // as read. Called by ChatApp on /chat-detail/<prefix> deep-link land so the
+  // user opening the chat actually drains the bell, instead of the badge
+  // ballooning forever.
+  fastify.post<{ Body: { chatIdPrefix?: string } }>(
+    "/api/notifications/read-by-chat-prefix",
+    async (req, reply) => {
+      const owner = resolveOwner(req, config, db);
+      if (!owner) {
+        reply.code(401);
+        return { error: "not authenticated" };
+      }
+      const prefix = typeof req.body?.chatIdPrefix === "string" ? req.body.chatIdPrefix.trim() : "";
+      if (!prefix || !/^[A-Za-z0-9-]{1,36}$/.test(prefix)) {
+        reply.code(400);
+        return { error: "invalid chatIdPrefix" };
+      }
+      const deepLink = `/chat-detail/${prefix}`;
+      const changed = markNotificationsReadByDeepLink(db, { userId: owner.id, deepLink });
+      return { ok: true, marked: changed };
+    },
+  );
 
   // ---------------- send-test (debug helper, owner only) ----------------
   fastify.post<{ Body: { title?: string; body?: string } }>("/api/push/send-test", async (req, reply) => {

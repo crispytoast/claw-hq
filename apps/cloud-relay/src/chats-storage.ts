@@ -116,6 +116,33 @@ export async function chatExists(id: string): Promise<boolean> {
 }
 
 /**
+ * Look up a chat's display title from its 8-char SPA prefix. Used by the push
+ * pipeline to prepend the chat title to "Response ready" so two chats firing
+ * pushes simultaneously (Head Oswald + Glass HQ, etc.) aren't indistinguishable
+ * in the tray. Lookup is two file ops (readdir + readFile) so we cache for
+ * ~30s — chat titles rarely change inside that window, and a stale title is a
+ * fine push-tray UX trade.
+ *
+ * Returns null when the prefix doesn't resolve (unknown chat, multiple
+ * matches) or the file can't be read. Callers fall back to the un-prefixed
+ * title in that case.
+ */
+const chatTitleCache = new Map<string, { title: string; cachedAt: number }>();
+const CHAT_TITLE_TTL_MS = 30_000;
+export async function getChatTitleByPrefix(prefix: string): Promise<string | null> {
+  const now = Date.now();
+  const cached = chatTitleCache.get(prefix);
+  if (cached && now - cached.cachedAt < CHAT_TITLE_TTL_MS) return cached.title;
+  const chatId = await resolveClawhqChatIdFromPrefix(prefix);
+  if (!chatId) return null;
+  const chat = await readChat(chatId);
+  const title = (chat?.title ?? "").toString().trim();
+  if (!title) return null;
+  chatTitleCache.set(prefix, { title, cachedAt: now });
+  return title;
+}
+
+/**
  * Append an assistant message to a chat ONLY if the latest assistant message's
  * content differs from what we're about to write. Lets the relay safely
  * re-persist on disconnect/reconnect races without producing duplicates when
