@@ -396,10 +396,124 @@ function pickCostUsd(p: Record<string, unknown>): number | null {
 const CONTEXT_LIMIT = 200_000;
 
 /**
- * After a chat-final lands, OpenClaw's session row has the fresh usage —
- * but there's no per-turn event that carries it. We poll sessions.list a
- * few times (rapid backoff) until we see numeric usage for our key, then
- * attach the HUD directly to the bubbleId for this run.
+ * Pull usage from a session row and attach a HUD to the given bubble.
+ *
+ * Returns true if the row had usable usage data and a HUD was attached,
+ * false if the row was empty/stale and we should try again later.
+ *
+ * Dedup: pass `attachedBubbleIds` so we don't double-attach when both the
+ * event path and the poll fallback see the same row. First caller wins.
+ */
+function tryAttachHudFromRow(args: {
+  row: Record<string, unknown>;
+  client: GatewayClient;
+  chatId: string;
+  bubbleId: string;
+  setItems: React.Dispatch<React.SetStateAction<DisplayItem[]>>;
+  noteOwnPersist: (id: string) => void;
+  attachedBubbleIds: Set<string>;
+}): boolean {
+  if (args.attachedBubbleIds.has(args.bubbleId)) return true;
+  const num = (k: string): number | null => {
+    const v = args.row[k];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  };
+  // OpenClaw's row semantics (verified live):
+  //   inputTokens / outputTokens — THIS turn only (per-call)
+  //   totalTokens — cumulative session usage so far
+  //   contextTokens — MODEL'S context window capacity (e.g. 1,048,576 for
+  //                   Opus 4.7's 1M window), NOT current usage.
+  const inputTokens = num("inputTokens");
+  const outputTokens = num("outputTokens");
+  const totalTokens = num("totalTokens");
+  const contextWindow = num("contextTokens");
+  const costUsd = num("estimatedCostUsd") ?? num("totalCostUsd");
+  if (inputTokens === null && outputTokens === null && costUsd === null && totalTokens === null) {
+    return false;
+  }
+  const tokensPart = (inputTokens !== null || outputTokens !== null)
+    ? ` · ${inputTokens ?? 0}→${outputTokens ?? 0} tok`
+    : "";
+  const costPart = costUsd !== null ? ` · $${costUsd.toFixed(4)}` : "";
+  const body = `done${tokensPart}${costPart}`;
+  const ctxPct = totalTokens !== null && totalTokens > 0
+    && contextWindow !== null && contextWindow > 0
+    ? Math.min(999, (totalTokens / contextWindow) * 100)
+    : null;
+  // Mark first so a concurrent caller bails. CAS-flavored — Set.has check
+  // was already done at top of function, but we still race on the write.
+  args.attachedBubbleIds.add(args.bubbleId);
+  const hud = { body, ctxPct };
+  args.setItems((prev) => prev.map((it) =>
+    it.kind === "message" && it.message.id === args.bubbleId
+      ? { kind: "message" as const, message: { ...it.message, hud } }
+      : it,
+  ));
+  const hudText = ctxPct !== null ? `${body} · ctx ${ctxPct.toFixed(1)}%` : body;
+  void args.client
+    .call<{ message?: { id?: string } }>("clawhq.chats.append", {
+      chatId: args.chatId,
+      role: "system",
+      content: hudText,
+    })
+    .then((r) => {
+      if (r?.message?.id) args.noteOwnPersist(r.message.id);
+    })
+    .catch((e) => {
+      console.warn("clawhq.chats.append (hud) failed:", e);
+    });
+  return true;
+}
+
+/**
+ * Fetch our session row from sessions.list and attempt a HUD attach.
+ * Used by both the event-driven path (sessions.changed listener) and
+ * the poll fallback.
+ */
+async function fetchRowAndAttempt(args: {
+  client: GatewayClient;
+  chatId: string;
+  sessionKey: string;
+  bubbleId: string;
+  setItems: React.Dispatch<React.SetStateAction<DisplayItem[]>>;
+  noteOwnPersist: (id: string) => void;
+  attachedBubbleIds: Set<string>;
+}): Promise<boolean> {
+  let row: Record<string, unknown> | null = null;
+  try {
+    const result = await args.client.call<{ sessions?: Array<Record<string, unknown>> }>(
+      "sessions.list",
+      {},
+    );
+    const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+    for (const s of sessions) {
+      if ((s as { key?: string }).key === args.sessionKey) {
+        row = s;
+        break;
+      }
+    }
+  } catch (e) {
+    console.warn("sessions.list (hud) failed:", e);
+    return false;
+  }
+  if (!row) return false;
+  return tryAttachHudFromRow({
+    row,
+    client: args.client,
+    chatId: args.chatId,
+    bubbleId: args.bubbleId,
+    setItems: args.setItems,
+    noteOwnPersist: args.noteOwnPersist,
+    attachedBubbleIds: args.attachedBubbleIds,
+  });
+}
+
+/**
+ * Poll fallback. The sessions.changed event listener is the primary signal,
+ * but if it never fires (e.g., gateway buffered the update past our listener
+ * lifecycle), this guarantees the HUD eventually lands. Extended window —
+ * ~20s total — to cover slow turns where the gateway lags on writing the
+ * post-turn usage to the session row.
  */
 async function fetchAndAttachHud(args: {
   client: GatewayClient;
@@ -408,73 +522,14 @@ async function fetchAndAttachHud(args: {
   bubbleId: string;
   setItems: React.Dispatch<React.SetStateAction<DisplayItem[]>>;
   noteOwnPersist: (id: string) => void;
+  attachedBubbleIds: Set<string>;
 }): Promise<void> {
-  const delays = [250, 500, 1000, 1500];
+  const delays = [200, 400, 800, 1200, 1600, 2000, 2500, 3000, 4000, 5000];
   for (const ms of delays) {
     await new Promise((resolve) => setTimeout(resolve, ms));
-    let row: Record<string, unknown> | null = null;
-    try {
-      const result = await args.client.call<{ sessions?: Array<Record<string, unknown>> }>(
-        "sessions.list",
-        {},
-      );
-      const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
-      for (const s of sessions) {
-        if ((s as { key?: string }).key === args.sessionKey) {
-          row = s;
-          break;
-        }
-      }
-    } catch (e) {
-      console.warn("sessions.list (hud poll) failed:", e);
-      return;
-    }
-    if (!row) continue;
-    const num = (k: string): number | null => {
-      const v = row![k];
-      return typeof v === "number" && Number.isFinite(v) ? v : null;
-    };
-    // OpenClaw's row semantics (verified live):
-    //   inputTokens / outputTokens — THIS turn only (per-call)
-    //   totalTokens — cumulative session usage so far
-    //   contextTokens — MODEL'S context window capacity (e.g. 1,048,576 for
-    //                   Opus 4.7's 1M window), NOT current usage. Renaming
-    //                   would help; we'll just treat it as the denominator.
-    const inputTokens = num("inputTokens");
-    const outputTokens = num("outputTokens");
-    const totalTokens = num("totalTokens");
-    const contextWindow = num("contextTokens");
-    const costUsd = num("estimatedCostUsd") ?? num("totalCostUsd");
-    if (inputTokens === null && outputTokens === null && costUsd === null && totalTokens === null) continue;
-    const tokensPart = (inputTokens !== null || outputTokens !== null)
-      ? ` · ${inputTokens ?? 0}→${outputTokens ?? 0} tok`
-      : "";
-    const costPart = costUsd !== null ? ` · $${costUsd.toFixed(4)}` : "";
-    const body = `done${tokensPart}${costPart}`;
-    const ctxPct = totalTokens !== null && totalTokens > 0
-      && contextWindow !== null && contextWindow > 0
-      ? Math.min(999, (totalTokens / contextWindow) * 100)
-      : null;
-    const hud = { body, ctxPct };
-    args.setItems((prev) => prev.map((it) =>
-      it.kind === "message" && it.message.id === args.bubbleId
-        ? { kind: "message" as const, message: { ...it.message, hud } }
-        : it,
-    ));
-    const hudText = ctxPct !== null ? `${body} · ctx ${ctxPct.toFixed(1)}%` : body;
-    void args.client
-      .call<{ message?: { id?: string } }>("clawhq.chats.append", {
-        chatId: args.chatId,
-        role: "system",
-        content: hudText,
-      })
-      .then((r) => {
-        if (r?.message?.id) args.noteOwnPersist(r.message.id);
-      })
-      .catch((e) => {
-        console.warn("clawhq.chats.append (hud) failed:", e);
-      });
-    return;
+    if (args.attachedBubbleIds.has(args.bubbleId)) return;
+    const attached = await fetchRowAndAttempt(args);
+    if (attached) return;
   }
 }
 function formatTurnHud(p: Record<string, unknown>, m: Record<string, unknown> | null): { text: string; ctxPct: number | null } | null {
@@ -557,6 +612,13 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
   const streamMapRef = useRef<Map<string, string>>(new Map());
   /** runId -> HUD that arrived on agent-end before the chat-final bubble existed. */
   const pendingHudRef = useRef<Map<string, { body: string; ctxPct: number | null }>>(new Map());
+  /** BubbleIds that already have a HUD attached. Dedup across event-driven
+   *  and poll-fallback HUD paths so neither can double-attach. */
+  const hudAttachedBubbleIdsRef = useRef<Set<string>>(new Set());
+  /** Bubble currently awaiting its HUD attach. Set on chat-final, cleared
+   *  on successful attach. Used by the sessions.changed listener to know
+   *  which bubble to target without threading runId through events. */
+  const awaitingHudBubbleIdRef = useRef<string | null>(null);
   /** Set after we successfully append a memory preamble, so we don't re-inject. */
   const memoryInjectedRef = useRef(false);
   /** Message ids we just persisted via clawhq.chats.append; lets us drop our own broadcast echo. */
@@ -1264,6 +1326,7 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
         // v1 trade-off vs. having every viewer write a duplicate HUD row.
         const turnBubbleId = runId ? streamMapRef.current.get(runId) : null;
         if (turnBubbleId && ev.viewerRole !== "peer") {
+          awaitingHudBubbleIdRef.current = turnBubbleId;
           void fetchAndAttachHud({
             client,
             chatId,
@@ -1271,6 +1334,7 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
             bubbleId: turnBubbleId,
             setItems,
             noteOwnPersist,
+            attachedBubbleIds: hudAttachedBubbleIdsRef.current,
           });
         }
         // Assistant-final persist is now handled by ChatApp's global
@@ -1287,10 +1351,38 @@ export function ChatDetailView({ client, chatId, projectSlug, chatKind, status, 
     });
   }, [client, sessionKey, chatId, noteOwnPersist]);
 
-  // HUD is now fetched on demand right after each chat-final via
-  // sessions.list — see fetchAndAttachHud(). The `sessions.changed` event
-  // path was dropped because OpenClaw only emits it on the NEXT turn's
-  // "send", so it lagged by one bubble.
+  // Primary HUD signal: subscribe to sessions.changed events for our
+  // sessionKey. The gateway emits one when it writes per-turn usage to
+  // the session row (verified in OpenClaw source at agent-DnsoYp5b.js:607
+  // and server-chat-DVXWYmKw.js:964). The poll fallback in
+  // fetchAndAttachHud() guarantees the HUD eventually lands even if this
+  // event is missed; this listener just makes it lands fast — usually
+  // within tens of ms of the chat-final.
+  useEffect(() => {
+    return client.onEvent((ev: OpenClawEvent) => {
+      if (ev.event !== "sessions.changed") return;
+      const p = (ev.payload ?? {}) as Record<string, unknown>;
+      const evKey = typeof p.sessionKey === "string" ? p.sessionKey : null;
+      if (evKey !== sessionKey) return;
+      const awaiting = awaitingHudBubbleIdRef.current;
+      if (!awaiting) return;
+      if (hudAttachedBubbleIdsRef.current.has(awaiting)) {
+        awaitingHudBubbleIdRef.current = null;
+        return;
+      }
+      void fetchRowAndAttempt({
+        client,
+        chatId,
+        sessionKey,
+        bubbleId: awaiting,
+        setItems,
+        noteOwnPersist,
+        attachedBubbleIds: hudAttachedBubbleIdsRef.current,
+      }).then((attached) => {
+        if (attached) awaitingHudBubbleIdRef.current = null;
+      });
+    });
+  }, [client, sessionKey, chatId, noteOwnPersist]);
 
   // Tool call events for our sessionKey. We're already globally subscribed via
   // gateway.ts on session_ready; here we just filter to this chat's session.
